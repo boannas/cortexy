@@ -413,9 +413,9 @@ private func tempDir() -> URL {
     #expect(!hidden(false))
 }
 
-/// The preview window: a folder column lists subfolders then notes; clicking goes one column deeper,
-/// replacing anything deeper still; notes measure their full height (it once came up empty at 0 pt).
-@MainActor @Test func previewBrowsesFoldersInColumns() {
+/// The preview's folder pages list subfolders, then notes; clicking a subfolder goes a level deeper along the
+/// path, a crumb goes back up, and a note row opens the note in the panel.
+@MainActor @Test func previewBrowsesFoldersAlongAPath() {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
     let s = Store(directory: dir)
@@ -440,7 +440,7 @@ private func tempDir() -> URL {
     p.push(.folder(deep), after: 1)
     p.push(.note(plan), after: 2)
     #expect(p.model.path == [.folder(work), .folder(proj), .folder(deep), .note(plan)])
-    p.push(.note(memo), after: 0)                                   // clicking higher up closes the deeper columns
+    p.push(.note(memo), after: 0)                                   // from a level higher up: the deeper ones go
     #expect(p.model.path == [.folder(work), .note(memo)])
     #expect(p.acceptsFirstClick) // it's never the key window, so a first click that only "focuses" would do nothing
 

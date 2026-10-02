@@ -85,7 +85,7 @@ enum Prefs {
     static let hideDelay = "hideDelay"                 // a pointer-opened panel closes this long after the pointer leaves
     static let previewDelay = "previewDelay"           // rest on a card this long to preview it
     static let previewHideDelay = "previewHideDelay"   // the preview closes this long after the pointer leaves
-    static let previewWidth = "previewWidth"           // 0 = as wide as the panel
+    static let previewWidth = "previewWidth"           // 0 = the default (300 pt)
     static let undoSeconds = "undoSeconds", showTags = "showTags", codeTab = "codeTab"
     static let trashDays = "trashDays"                 // 0 = keep until emptied
     static let backupsKept = "backupsKept"
@@ -94,7 +94,7 @@ enum Prefs {
     static let systemCalendar = "systemCalendar" // dates in the Mac's calendar (e.g. Buddhist 2569) instead of Gregorian
     static let dateLanguage = "dateLanguage"     // month and day names: "" this Mac's language, "th", "en"
     static let versionsKept = "versionsKept"
-    static let webImages = "webImages"
+    static let webImages = "webImages"                 // fetch web images in every note (else each note asks: WebImages.allows)
     static let reminders = "reminders", remindAt = "remindAt" // remindAt: the hour for due dates without a time
     static let touchID = "touchID", lockOnHide = "lockOnHide"
 

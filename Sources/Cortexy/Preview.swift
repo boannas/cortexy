@@ -10,11 +10,11 @@ import SwiftUI
 
         var isText: Bool { switch self { case .note, .version: true; default: false } }
     }
-    var path: [Item] = [] // where it is: the hovered thing, then each subfolder gone into; the last shows
-    var peek: UUID?            // a note in the folder on show, rested on: its text in a second card beside
-    var peekCard: CGRect = .zero
-    var card: CGRect = .zero // the card, in its clear window (top-left origin): springs between places and sizes
-    var shown = false        // faded in
+    var path: [Item] = []       // the hovered thing, then each subfolder gone into; the last one shows
+    var peek: UUID?             // a note in the folder on show, rested on: its text in a second card beside
+    var card: CGRect = .zero    // the card, in its clear window (top-left origin); its size never changes
+    var peekCard: CGRect = .zero // where the second card goes (.zero: no room for it)
+    var shown = false           // faded in
 }
 
 /// The preview beside the panel: one card of one size, level with what was hovered. Only what it shows changes;
@@ -43,7 +43,7 @@ final class PreviewController: NSObject {
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         window.isOpaque = false
         window.backgroundColor = .clear
-        window.hasShadow = false // the card draws its own; a window shadow wouldn't follow it as it springs
+        window.hasShadow = false // the card draws its own; a window shadow would outline the whole clear strip
         window.hidesOnDeactivate = false
         window.animationBehavior = .none
         // The window never becomes key (the panel keeps focus), so every click is a "first" click: it must act.
@@ -170,9 +170,7 @@ final class PreviewController: NSObject {
         source = at
         let first = !model.shown
         place(animated: !first) // level with what was hovered; its size never changes
-        peekPending?.cancel()
-        model.peek = nil
-        model.path = [item]
+        go(to: [item])
         window.orderFrontRegardless()
         if first { DispatchQueue.main.async { [self] in
             guard !model.path.isEmpty else { return } // hidden again before it got to show
@@ -202,17 +200,20 @@ final class PreviewController: NSObject {
     /// Goes into `item` (a subfolder clicked) from level `index` of the path: the path's last level is what shows.
     func push(_ item: PreviewModel.Item, after index: Int) {
         guard model.path.indices.contains(index) else { return }
-        peekPending?.cancel()
-        model.peek = nil
-        model.path = Array(model.path.prefix(index + 1)) + [item]
+        go(to: Array(model.path.prefix(index + 1)) + [item])
     }
 
     /// Back up to level `index` (from the path bar).
     func pop(to index: Int) {
         guard model.path.indices.contains(index) else { return }
+        go(to: Array(model.path.prefix(index + 1)))
+    }
+
+    /// Somewhere else in the card: the note beside it (of the old place) goes.
+    private func go(to path: [PreviewModel.Item]) {
         peekPending?.cancel()
         model.peek = nil
-        model.path = Array(model.path.prefix(index + 1))
+        model.path = path
     }
 
     /// A note row in the folder on show: resting on it shows the note in the card beside (passing over doesn't).
@@ -236,7 +237,7 @@ final class PreviewController: NSObject {
         PanelController.shared?.panel.makeKeyAndOrderFront(nil)
     }
 
-    // MARK: Contents and size
+    // MARK: Contents
 
     struct Row: Identifiable {
         let id: String
@@ -448,8 +449,7 @@ struct FolderPage: View {
 
     var body: some View {
         let rows = controller.rows(item)
-        let model = controller.model
-        let next = model.path.indices.contains(index + 1) ? model.path[index + 1] : nil
+        let peek = controller.model.peek.map(PreviewModel.Item.note) // the note shown beside: its row is marked
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text(controller.title(item)).font(.system(size: 13, weight: .semibold)).lineLimit(1)
@@ -466,7 +466,7 @@ struct FolderPage: View {
             ScrollView {
                 VStack(spacing: 2) {
                     ForEach(rows) { row in
-                        PreviewRowView(row: row, selected: next == row.item || (model.peek.map { .note($0) == row.item } ?? false))
+                        PreviewRowView(row: row, selected: row.item == peek)
                             // A folder opens in this card, a note in the panel; resting on a note shows it beside.
                             .onTapGesture { row.isFolder ? controller.push(row.item, after: index) : controller.openInPanel(row.item) }
                             .onHover { if !row.isFolder { controller.hoverNote(row.item, inside: $0) } }
@@ -479,7 +479,7 @@ struct FolderPage: View {
 }
 
 struct PreviewRowView: View {
-    static let height: CGFloat = 42 // fixed, so the card can be sized to its rows exactly
+    static let height: CGFloat = 42
     let row: PreviewController.Row
     let selected: Bool
     @Local private var hover = false
