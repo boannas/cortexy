@@ -31,6 +31,14 @@
 - เปิดครั้งแรกจะมีโน้ตคู่มือทุกฟีเจอร์ให้ทั้งภาษาอังกฤษและไทย (`Sources/Cortexy/Welcome.swift`) ลบทิ้งได้
 - ข้อมูลอยู่ที่ `~/Library/Application Support/Cortexy` (เปลี่ยนเป็นโฟลเดอร์ iCloud ได้ใน Settings → Data)
 
+**ลองเองแบบคนใช้ครั้งแรก โดยไม่ทับ Cortexy ที่ใช้อยู่**
+- เหมือนเครื่องใหม่ที่สุด: System Settings → Users & Groups → Add User แล้ว log in เข้า user นั้นไปลอง
+  (วาง zip ไว้ที่ `/Users/Shared`) — โน้ต, settings, hotkey, รหัสล็อก แยกจากของคุณทั้งหมด
+- เร็วกว่า: Quit Cortexy ตัวที่ใช้อยู่ก่อน (สองตัวพร้อมกันจะแย่ง hotkey) แล้วรันจาก Terminal
+  `CORTEXY_DATA_DIR=~/Desktop/cortexy-demo ~/Downloads/Cortexy.app/Contents/MacOS/Cortexy`
+  — โน้ตอยู่ในโฟลเดอร์ใหม่ (ได้คู่มือครบ) แต่ **settings ใช้ร่วมกับตัวจริง** อย่าแก้ theme/shortcut/Data ระหว่างลอง;
+  เลิกลองด้วย Quit แล้วเปิด `/Applications/Cortexy.app` ตามเดิม ลบ `~/Desktop/cortexy-demo` ทิ้งได้
+
 ถ้าจะแจกให้คนทั่วไปแบบไม่มีขั้นตอน Open Anyway ต้องสมัคร Apple Developer Program (ปีละ $99),
 เซ็นด้วยใบรับรอง Developer ID แล้ว notarize (`xcrun notarytool` มีใน Command Line Tools อยู่แล้ว ไม่ต้องใช้ Xcode)
 
