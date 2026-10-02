@@ -2,6 +2,7 @@
 # Builds build/Cortexy.app (ad-hoc signed). Needs only Xcode Command Line Tools.
 #   ./build.sh            build
 #   ./build.sh install    build, copy to /Applications, launch
+#   ./build.sh dist       build for Apple silicon and Intel, zipped to share: build/Cortexy-<version>.zip
 #   ./build.sh test       run the tests
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -11,11 +12,14 @@ if [[ "${1:-}" == "test" ]]; then
     exec swift test -Xswiftc -plugin-path -Xswiftc "$(xcode-select -p)/usr/lib/swift/host/plugins/testing"
 fi
 
-swift build -c release
+# To share, one binary for both kinds of Mac (macOS 26 is the last for Intel ones); here, just this Mac's.
+ARCH=()
+[[ "${1:-}" == "dist" ]] && ARCH=(--arch arm64 --arch x86_64)
+swift build -c release ${ARCH[@]+"${ARCH[@]}"}
 APP=build/Cortexy.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$(swift build -c release --show-bin-path)/Cortexy" "$APP/Contents/MacOS/Cortexy"
+cp "$(swift build -c release ${ARCH[@]+"${ARCH[@]}"} --show-bin-path)/Cortexy" "$APP/Contents/MacOS/Cortexy"
 cp Resources/AppIcon.icns Resources/Cortexy.sdef "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -53,6 +57,14 @@ PLIST
 
 codesign --force --sign - "$APP"
 echo "Built $APP"
+
+if [[ "${1:-}" == "dist" ]]; then
+    VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
+    ZIP="build/Cortexy-$VERSION.zip"
+    rm -f "$ZIP"
+    ditto -c -k --keepParent "$APP" "$ZIP" # keeps the signature and bundle intact (Finder's Compress does the same)
+    echo "Packed $ZIP ($(lipo -archs "$APP/Contents/MacOS/Cortexy")) — see README → Running it on another Mac"
+fi
 
 if [[ "${1:-}" == "install" ]]; then
     pkill -x Cortexy || true

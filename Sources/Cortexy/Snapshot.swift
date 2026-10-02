@@ -55,7 +55,7 @@ enum Snapshot {
     }
 
     private static func seed(_ s: Store) {
-        guard s.folders.count < 3 else { return }
+        guard !s.folders.contains(where: { $0.name == "Work" }) else { return } // (a new library also has the guide)
         let work = s.addFolder("Work")
         s.updateFolder(work) { $0.color = .blue; $0.pinned = true }
         let img = NSImage(size: NSSize(width: 640, height: 360), flipped: false) { r in

@@ -6,3 +6,4 @@ xcuserdata/
 *.xcuserstate
 demo/
 tools/demo/.bin/
+.drafts/

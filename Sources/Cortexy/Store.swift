@@ -165,7 +165,8 @@ struct Folder: Codable, Identifiable, Hashable, Pinnable {
             ?? defaultDirectory
     }
 
-    init(directory: URL = Store.defaultDirectory) {
+    /// `firstRun`: what a new library starts with (the guide; tests and screenshots start plainer).
+    init(directory: URL = Store.defaultDirectory, firstRun: () -> [Folder] = Store.welcome) {
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
         self.directory = directory
@@ -176,7 +177,7 @@ struct Folder: Codable, Identifiable, Hashable, Pinnable {
             && Store.newestBackup(in: directory) == nil
 
         if isFirstRun {
-            folders = Store.welcome()
+            folders = firstRun()
             edits += 1
             save()
             return
@@ -196,7 +197,7 @@ struct Folder: Codable, Identifiable, Hashable, Pinnable {
             NSLog("Cortexy: could not read notes (\(error)); a copy is kept as cortexy-unreadable-*.json")
             loading = true
             folders = Store.withBuiltIns(Store.newestBackup(in: directory).flatMap { try? JSONDecoder().decode([Folder].self, from: Data(contentsOf: $0)) }
-                ?? Store.welcome())
+                ?? firstRun())
             loading = false
             lastWrite = .distantPast // whatever the file says next is newer
             recovering = true
@@ -729,24 +730,8 @@ struct Folder: Codable, Identifiable, Hashable, Pinnable {
         return out
     }
 
-    /// First-run content: a note on the home screen that teaches the basics.
-    static func welcome() -> [Folder] {
-        var f = Folder.builtIn(Folder.rootID, "Cortexy")
-        var n = Note()
-        n.text = """
-        # Welcome to Cortexy
-        Push the pointer against the right edge of the screen, or press ⌃⌥N.
-
-        - [ ] Click a checkbox to tick it
-        - [x] **Bold**, *italic*, `code` and [links](https://apple.com) render as you type
-        - Drag notes to reorder them, or drop files and images in
-        - Right-click a note for colors, pins, snippets and folders
-        - Esc hides the panel, ⌘, opens Settings
-        """
-        n.color = .blue
-        f.notes = [n]
-        return withBuiltIns([f])
-    }
+    /// First-run content: a guide to the app, in English and Thai (Welcome.swift).
+    static func welcome() -> [Folder] { Welcome.library() }
 }
 
 extension Array where Element: Pinnable {

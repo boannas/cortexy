@@ -3,7 +3,21 @@ import Foundation
 import SwiftUI
 import Carbon
 import Testing
+
 @testable import Cortexy
+
+extension Store {
+    /// A new library as most tests want it: one note at home, none of the first-run guide.
+    convenience init(testing directory: URL) {
+        self.init(directory: directory) {
+            var home = Folder.builtIn(Folder.rootID, "Cortexy")
+            var n = Note()
+            n.text = "# Welcome\nhello"
+            home.notes = [n]
+            return Store.withBuiltIns([home])
+        }
+    }
+}
 
 @Test func tasksToggleAndConvert() {
     #expect(MD.toggleTask("- [ ] milk") == "- [x] milk")
@@ -71,20 +85,20 @@ private func tempDir() -> URL {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
 
-    let a = Store(directory: dir)
+    let a = Store(testing: dir)
     #expect(a.isFirstRun)
     let fid = a.addFolder("Work")
     let nid = a.addNote(to: fid, text: "- [ ] ship it")!
     a.updateNote(fid, nid) { $0.snippet = true; $0.code = true }
     a.save()
 
-    let b = Store(directory: dir)
+    let b = Store(testing: dir)
     #expect(!b.isFirstRun)
     #expect(b.folders == a.folders)
 
     // A file from an older version with missing fields must still load.
     try Data(#"[{"name":"Old","notes":[{"text":"hi"}]}]"#.utf8).write(to: b.url)
-    let c = Store(directory: dir)
+    let c = Store(testing: dir)
     #expect(c.folder(Folder.rootID) != nil) // home is added to files from before nesting
     #expect(c.subfolders(Folder.rootID).first?.name == "Old")
     #expect(c.subfolders(Folder.rootID).first?.notes.first?.text == "hi")
@@ -94,7 +108,7 @@ private func tempDir() -> URL {
     try FileManager.default.createDirectory(at: c.backupsDirectory, withIntermediateDirectories: true)
     try Data(contentsOf: c.url).write(to: c.backupsDirectory.appendingPathComponent("cortexy-2099-01-01.json"))
     try Data("not json".utf8).write(to: c.url)
-    let d = Store(directory: dir)
+    let d = Store(testing: dir)
     let parked = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasPrefix("cortexy-unreadable-") }
     #expect(parked.count == 1 && d.recovering && !d.isFirstRun && !d.dirty)
     #expect(d.subfolders(Folder.rootID).first?.name == "Old")      // from the backup
@@ -104,14 +118,14 @@ private func tempDir() -> URL {
 
     // No file at all but backups exist (iCloud hasn't downloaded it yet): not a first run, nothing written.
     try FileManager.default.removeItem(at: d.url)
-    let e = Store(directory: dir)
+    let e = Store(testing: dir)
     #expect(!e.isFirstRun && e.recovering && !FileManager.default.fileExists(atPath: e.url.path))
 }
 
 @Test func externalChangesReloadAndConflictsAreKept() throws {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let mine = Store(directory: dir)
+    let mine = Store(testing: dir)
     let fid = mine.folders[0].id
 
     // Another Mac writes the synced file.
@@ -142,7 +156,7 @@ private func tempDir() -> URL {
 @Test func attachmentsAndExport() throws {
     let dir = tempDir(), out = tempDir()
     defer { try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: out) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let fid = s.addFolder("Notes")
 
     let path = try #require(s.addAttachment(Data([1, 2, 3]), ext: "PNG"))
@@ -168,7 +182,7 @@ private func tempDir() -> URL {
 @Test func foldersNestAndHomeHoldsNotes() throws {
     let dir = tempDir(), out = tempDir()
     defer { try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: out) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     #expect(s.note(Folder.rootID, s.folder(Folder.rootID)!.notes[0].id) != nil) // welcome note is on the home screen
 
     let work = s.addFolder("Work"), proj = s.addFolder("Projects", in: work), home = s.addFolder("Home")
@@ -197,7 +211,7 @@ private func tempDir() -> URL {
 @Test func recentlyDeletedRestoresAndPurges() throws {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let work = s.addFolder("Work"), proj = s.addFolder("Projects", in: work)
     let n = s.addNote(to: proj, text: "keep me")!
     let m = s.addNote(to: work, text: "me too")!
@@ -226,7 +240,7 @@ private func tempDir() -> URL {
 @Test func notesSortWithinPinnedGroups() {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let f = s.addFolder("F")
     let b = s.addNote(to: f, text: "banana")!, a = s.addNote(to: f, text: "apple")!, c = s.addNote(to: f, text: "cherry")!
     s.updateNote(f, b) { $0.modified = Date().addingTimeInterval(60); $0.created = Date().addingTimeInterval(-60) }
@@ -244,7 +258,7 @@ private func tempDir() -> URL {
 @Test func dropMarkArchiveAndTree() {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let nav = Nav(store: s)
     nav.route = .home
     let work = s.addFolder("Work"), proj = s.addFolder("Projects", in: work), home = s.addFolder("Home")
@@ -318,7 +332,7 @@ private func tempDir() -> URL {
 @Test func searchSmartFoldersLinksAndPalette() {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let nav = Nav(store: s)
     let work = s.addFolder("Work"), home = s.addFolder("Home")
     let plan = s.addNote(to: work, text: "# Plan\nmilk #shop")!
@@ -390,7 +404,7 @@ private func tempDir() -> URL {
 @Test func backFromBuiltInPagesGoesHome() {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let nav = Nav(store: Store(directory: dir))
+    let nav = Nav(store: Store(testing: dir))
     nav.route = .folder(Folder.trashID)
     nav.back()
     #expect(nav.route == .home)
@@ -418,7 +432,7 @@ private func tempDir() -> URL {
 @MainActor @Test func previewBrowsesFoldersAlongAPath() {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let nav = Nav(store: s)
     let p = PreviewController(nav: nav)
     let work = s.addFolder("Work"), proj = s.addFolder("Projects", in: work), deep = s.addFolder("Q3", in: proj)
@@ -498,7 +512,7 @@ private func tempDir() -> URL {
 @MainActor @Test func templatesAndDailyNotes() {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let nav = Nav(store: s)
     let day = ISO8601DateFormatter().date(from: "2026-03-05T09:30:00Z")!
     let (text, caret) = Nav.expand("# {{date}} {{date:yyyy}}\nin {{folder}}: {{cursor}}!", date: day, folder: "Work")
@@ -603,7 +617,7 @@ private final class StubImages: URLProtocol {
     let dir = tempDir()
     let keep = UserDefaults.standard.stringArray(forKey: "noteWindows")
     defer { try? FileManager.default.removeItem(at: dir); UserDefaults.standard.set(keep, forKey: "noteWindows") }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let nav = Nav(store: s)
     let n = s.addNote(to: Folder.rootID, text: "")!
     nav.route = .note(Folder.rootID, n)
@@ -657,7 +671,7 @@ private final class StubImages: URLProtocol {
     Prefs.register()
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let nav = Nav(store: s)
     let long = s.addNote(to: Folder.rootID, text: (1...80).map { "line \($0)" }.joined(separator: "\n"))!
     let host = NSHostingView(rootView: RootView(nav: nav).frame(width: 360, height: 500))
@@ -752,7 +766,7 @@ private final class StubImages: URLProtocol {
 @Test func versionHistoryKeepsAndRestores() throws {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let nav = Nav(store: s)
     let n = s.addNote(to: Folder.rootID, text: "first")!
     nav.route = .note(Folder.rootID, n)                       // opening keeps how it was
@@ -775,7 +789,7 @@ private final class StubImages: URLProtocol {
     // A note deleted for good loses its history at the next launch.
     s.deleteNote(Folder.rootID, n)
     s.save()
-    let reopened = Store(directory: dir)
+    let reopened = Store(testing: dir)
     _ = reopened.history(n) // reads on the same queue as its clean-up, so after it
     #expect(!FileManager.default.fileExists(atPath: s.historyDirectory.appendingPathComponent(n.uuidString + ".json").path))
 }
@@ -795,7 +809,7 @@ private final class StubImages: URLProtocol {
 
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let nav = Nav(store: s)
     s.addNote(to: Folder.rootID, text: "# Errands\n- [ ] call bank 📅 2026-10-05 14:30\n- [x] paid @2026-10-01\nplain 📅 2026-10-09")
     #expect(nav.dueTasks.map { "\($0.text)|\($0.done)|\($0.line)" } == ["paid|true|2", "call bank|false|1"])
@@ -823,7 +837,7 @@ private final class StubImages: URLProtocol {
 
     let dir = tempDir(), out = tempDir()
     defer { try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: out) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let nav = Nav(store: s)
     let pic = s.addAttachment(Data("SECRET-PIXELS".utf8), ext: "png")!
     let n = s.addNote(to: Folder.rootID, text: "# Bank\nPIN 4321\n![](\(pic))")!
@@ -1009,7 +1023,7 @@ private func pngFile(in dir: URL) throws -> String {
 @Test func savingNeverOverwritesAnotherMacsEdit() throws {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let mine = Store(directory: dir)
+    let mine = Store(testing: dir)
     #expect(!mine.dirty)
 
     // Their edit lands; we have nothing new, so saving (e.g. hiding the panel) must leave it alone.
@@ -1028,13 +1042,13 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(conflicts.count == 1)
 
     // Reopening only reads.
-    #expect(!Store(directory: dir).dirty)
+    #expect(!Store(testing: dir).dirty)
 }
 
 @Test func exportKeepsSameNamedFoldersAndNotesApart() throws {
     let dir = tempDir(), out = tempDir()
     defer { try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: out) }
-    let s = Store(directory: dir)
+    let s = Store(testing: dir)
     let a = s.addFolder("Work"), b = s.addFolder("work")
     s.addNote(to: a, text: "Todo")
     s.addNote(to: a, text: "todo")
@@ -1101,7 +1115,7 @@ private func pngFile(in dir: URL) throws -> String {
 }
 
 @MainActor @Test func graphLinksTagsAndNeighborhood() {
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let seeded = s.liveFolders.flatMap(\.notes).count // the welcome note
     let work = s.addFolder("Work")
     let a = s.addNote(to: Folder.rootID, text: "# A\nsee [[b]] and [[Missing]] #plan")!
@@ -1148,7 +1162,7 @@ private func pngFile(in dir: URL) throws -> String {
 
 /// Deleting for good only ever happens to what's already in Recently Deleted, and only when asked.
 @Test func nothingIsLostForGoodByAccident() {
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let nav = Nav(store: s)
     // A search from Recently Deleted lists live notes too: deleting marked hits sends live ones to the trash.
     let live = s.addNote(to: Folder.rootID, text: "# Budget\n2026")!
@@ -1213,7 +1227,7 @@ private func pngFile(in dir: URL) throws -> String {
 }
 
 @Test func changingTheDataFolderTakesEverything() throws {
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let n = s.addNote(to: Folder.rootID, text: "# Plan\nv1")!
     _ = s.addAttachment(Data("img".utf8), ext: "png")
     s.snapshot(n)
@@ -1221,7 +1235,7 @@ private func pngFile(in dir: URL) throws -> String {
     let target = tempDir()
     try FileManager.default.createDirectory(at: target.appendingPathComponent("attachments"), withIntermediateDirectories: true) // already there
     try s.copyLibrary(to: target)
-    let t = Store(directory: target)
+    let t = Store(testing: target)
     #expect(t.note(Folder.rootID, n)?.text == "# Plan\nv1" && t.history(n).count == 1)
     #expect((try FileManager.default.contentsOfDirectory(atPath: target.appendingPathComponent("attachments").path)).count == 1)
 }
@@ -1384,7 +1398,7 @@ private func pngFile(in dir: URL) throws -> String {
 
 /// Anything in Recently Deleted can come back, even from inside a deleted folder.
 @Test func restoreFromInsideADeletedFolder() {
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let work = s.addFolder("Work"), sub = s.addFolder("Sub", in: work)
     let n = s.addNote(to: work, text: "# N")!
     s.trashFolder(work)
@@ -1396,7 +1410,7 @@ private func pngFile(in dir: URL) throws -> String {
 /// Back goes where you came from: the search a hit was opened from, the note a link was followed from; only
 /// with nowhere left does it go up a level. The note you left is selected in the list you return to.
 @MainActor @Test func backRetracesYourSteps() {
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let nav = Nav(store: s)
     let work = s.addFolder("Work")
     let a = s.addNote(to: work, text: "# A\nsee [[B]] budget")!
@@ -1424,7 +1438,7 @@ private func pngFile(in dir: URL) throws -> String {
 @MainActor @Test func lockedFolders() {
     Nav.passwordAnswer = .some(nil) // never a real password prompt or alert (a test would wait on it forever)
     defer { Nav.passwordAnswer = nil }
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let nav = Nav(store: s)
     let work = s.addFolder("Work"), sub = s.addFolder("Deep", in: work)
     let a = s.addNote(to: work, text: "# Salary\n42000 #pay")!
@@ -1452,7 +1466,7 @@ private func pngFile(in dir: URL) throws -> String {
 }
 
 @MainActor @Test func searchHintsFollowWhatsTyped() {
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let nav = Nav(store: s)
     _ = s.addFolder("Work Projects")
     _ = s.addNote(to: Folder.rootID, text: "# A\n#งาน #home")!
@@ -1475,7 +1489,7 @@ private func pngFile(in dir: URL) throws -> String {
     await PanelGate.enter()
     defer { PanelGate.leave() }
     Prefs.register()
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let c = PanelController(store: s)
     c.holdOpen += 1 // other tests open key windows meanwhile: that must not close this panel
     func settle(_ ok: () -> Bool) async throws { for _ in 0..<50 where !ok() { try await Task.sleep(for: .milliseconds(100)) } }
@@ -1515,7 +1529,7 @@ private func pngFile(in dir: URL) throws -> String {
     await PanelGate.enter()
     defer { PanelGate.leave() }
     Prefs.register()
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let c = PanelController(store: s)
     c.holdOpen += 1 // other tests open key windows meanwhile: that must not close this panel
     let n = s.addNote(to: Folder.rootID, text: "# Short\nhi")!
@@ -1550,7 +1564,7 @@ private func pngFile(in dir: URL) throws -> String {
     await PanelGate.enter()
     defer { PanelGate.leave() }
     Prefs.register()
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let big = s.addFolder("Big"), small = s.addFolder("Small")
     for i in 0..<12 { _ = s.addNote(to: big, text: "# Note \(i)") }
     let sub = s.addFolder("Sub", in: small)
@@ -1594,7 +1608,7 @@ private func pngFile(in dir: URL) throws -> String {
     await PanelGate.enter()
     defer { PanelGate.leave() }
     Prefs.register()
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let a = s.addFolder("A"), b = s.addFolder("B")
     _ = s.addNote(to: a, text: "# in A")
     _ = s.addNote(to: b, text: "# in B")
@@ -1640,7 +1654,7 @@ private func pngFile(in dir: URL) throws -> String {
     await PanelGate.enter()
     defer { PanelGate.leave() }
     Prefs.register()
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let a = s.addFolder("A"), b = s.addFolder("B")
     _ = s.addNote(to: a, text: "# in A")
     _ = s.addNote(to: b, text: "# in B")
@@ -1721,7 +1735,7 @@ private func pngFile(in dir: URL) throws -> String {
 @MainActor @Test func lockedFoldersKeepTheirSecrets() {
     Nav.passwordAnswer = .some(nil) // never a real password prompt or alert
     defer { Nav.passwordAnswer = nil }
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let nav = Nav(store: s)
     let work = s.addFolder("Work"), sub = s.addFolder("Deep", in: work), other = s.addFolder("Other")
     let a = s.addNote(to: work, text: "# Salary\n42000")!, b = s.addNote(to: sub, text: "# Contract\nsecret")!
@@ -1794,7 +1808,7 @@ private func pngFile(in dir: URL) throws -> String {
 @MainActor @Test func olderLockedFoldersOpenFully() {
     Nav.passwordAnswer = .some(nil)
     defer { Nav.passwordAnswer = nil }
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let nav = Nav(store: s)
     let f = s.addFolder("Old")
     let n = s.addNote(to: f, text: "# Kept\nbody")!
@@ -1811,7 +1825,7 @@ private func pngFile(in dir: URL) throws -> String {
 /// The search box's hint list takes the arrow keys first (then the results do), and Return applies the hint
 /// they're on; a rename left half typed is kept when you go elsewhere (Esc cancels it).
 @MainActor @Test func hintKeysAndHalfTypedRenames() {
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let nav = Nav(store: s)
     _ = s.addNote(to: Folder.rootID, text: "# A\n#alpha #beta #gamma")!
     nav.search = "#"
@@ -1902,7 +1916,7 @@ private func pngFile(in dir: URL) throws -> String {
 /// note opened; keys that can't work are refused with a reason, and Cortexy's own ⌘ keys it takes over are named.
 @MainActor @Test func customShortcuts() {
     Prefs.register()
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let nav = Nav(store: s)
     let templates = s.addFolder("Templates")
     let meeting = s.addNote(to: templates, text: "# Meeting {{date}}\n- {{cursor}}")!
@@ -1939,7 +1953,7 @@ private func pngFile(in dir: URL) throws -> String {
 /// Back to a list puts you where you were in it: on the note you left, or the folder you came out of (the list
 /// scrolls to it), rather than at the top.
 @MainActor @Test func backReturnsToWhereYouWereInTheList() {
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let nav = Nav(store: s)
     let parent = s.addFolder("Parent")
     let kids = (0..<30).map { s.addFolder("Sub \($0)", in: parent) }
@@ -1958,7 +1972,7 @@ private func pngFile(in dir: URL) throws -> String {
 @MainActor @Test func changingTheLockPassword() {
     Nav.passwordAnswer = .some(nil)
     defer { Nav.passwordAnswer = nil }
-    let s = Store(directory: tempDir())
+    let s = Store(testing: tempDir())
     let nav = Nav(store: s)
     let solo = s.addNote(to: Folder.rootID, text: "# Bank\nPIN 1234")!
     let f = s.addFolder("Vault"), inside = s.addNote(to: f, text: "# Deed")!
@@ -1999,4 +2013,27 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(WebImages.shared.allows(note) && !WebImages.shared.allows(other))
     d.set(true, forKey: Prefs.webImages)
     #expect(WebImages.shared.allows(other))                         // every note, from Settings
+}
+
+/// What a new library starts with: the guide in English and in Thai (the same parts), every [[link]] in it
+/// going to a note that's there (a broken one would make an empty note when clicked), templates, a smart
+/// folder that finds the tasks, and dated tasks for Upcoming.
+@MainActor @Test func theWelcomeGuide() throws {
+    let dir = tempDir()
+    let s = Store(directory: dir) // a new library, as a new user gets it
+    let nav = Nav(store: s)
+    let en = try #require(s.folders.first { $0.name == "Guide (English)" })
+    let th = try #require(s.folders.first { $0.name == "คู่มือ (ภาษาไทย)" })
+    #expect(en.notes.count == th.notes.count && en.notes.count >= 10)
+    let titles = Set(s.folders.flatMap(\.notes).map(\.title))
+    for n in s.folders.flatMap(\.notes) {
+        for link in MD.wikiLinks(n.text) { #expect(titles.contains(link), "\(n.title) links to [[\(link)]], which isn't there") }
+    }
+    #expect(s.folders.first { $0.name == "Templates" }?.notes.count == 2 && nav.templates.count == 2)
+    let todo = try #require(s.folders.first { $0.name == "To Do" })
+    #expect(todo.query == "is:todo" && !nav.hits(Query(todo.query!)).isEmpty)
+    #expect(nav.dueTasks.filter { !$0.done }.count >= 4)              // both guides' dated tasks, in the future
+    #expect(nav.dueTasks.allSatisfy { $0.done || $0.date > Date() })
+    #expect(nav.allTags.contains { $0.name == "guide" } && nav.allTags.contains { $0.name == "คู่มือ" })
+    #expect(s.folder(Folder.rootID)!.notes.first?.pinned == true)    // the start note, on top at home
 }

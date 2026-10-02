@@ -12,8 +12,27 @@
 ./build.sh test      # รันเทสต์
 ```
 
-แอปเซ็นแบบ ad-hoc (build บนเครื่องตัวเองจึงเปิดได้เลย) — ถ้าส่งไฟล์ `.app` ให้คนอื่นตรงๆ เขาต้องไปกด
-System Settings → Privacy & Security → Open Anyway
+แอปเซ็นแบบ ad-hoc (build บนเครื่องตัวเองจึงเปิดได้เลย)
+
+### Running it on another Mac (ส่งให้คนอื่นใช้)
+
+```bash
+./build.sh dist      # → build/Cortexy-<version>.zip ใช้ได้ทั้ง Apple silicon และ Intel
+```
+
+สิ่งที่เครื่องปลายทางต้องมี/ต้องทำ:
+- **macOS 26 (Tahoe) ขึ้นไป** — ใช้ Liquid Glass ของ macOS 26; Intel Mac ใช้ได้ถ้าลง macOS 26 ได้ (macOS 26 เป็นรุ่นสุดท้ายของ Intel)
+- ไม่ต้องลง Xcode หรืออะไรเพิ่ม: แตก zip แล้วลาก `Cortexy.app` ไปไว้ใน Applications
+- **เปิดครั้งแรก**: แอปเซ็นแบบ ad-hoc (ไม่ใช่ Developer ID) macOS จะบอกว่าตรวจสอบผู้พัฒนาไม่ได้ —
+  เปิดหนึ่งครั้ง แล้วไป System Settings → Privacy & Security → เลื่อนลงไปกด **Open Anyway**
+  (หรือใน Terminal: `xattr -dr com.apple.quarantine /Applications/Cortexy.app`)
+- ระบบจะขออนุญาตเองเมื่อใช้ฟีเจอร์นั้นครั้งแรก: **Notifications** (แจ้งเตือนงาน), **Screen Recording** (Insert Screenshot),
+  Keychain (ถ้าเปิด Touch ID ปลดล็อกโน้ต) — ไม่ต้องใช้ Accessibility
+- เปิดครั้งแรกจะมีโน้ตคู่มือทุกฟีเจอร์ให้ทั้งภาษาอังกฤษและไทย (`Sources/Cortexy/Welcome.swift`) ลบทิ้งได้
+- ข้อมูลอยู่ที่ `~/Library/Application Support/Cortexy` (เปลี่ยนเป็นโฟลเดอร์ iCloud ได้ใน Settings → Data)
+
+ถ้าจะแจกให้คนทั่วไปแบบไม่มีขั้นตอน Open Anyway ต้องสมัคร Apple Developer Program (ปีละ $99),
+เซ็นด้วยใบรับรอง Developer ID แล้ว notarize (`xcrun notarytool` มีใน Command Line Tools อยู่แล้ว ไม่ต้องใช้ Xcode)
 
 ## ฟีเจอร์
 
