@@ -22,6 +22,20 @@ enum MD {
     static let imageRegex = try! NSRegularExpression(pattern: #"!\[((?:\\.|[^\]\\\n])*)\]\(([^)\s]+)\)"#)
     static let fileLinkRegex = try! NSRegularExpression(pattern: #"(?<!!)\[((?:\\.|[^\]\\\n])+)\]\((file://[^)\s]+)\)"#)
 
+    /// The first `lines` lines of `text` (without the break after them), and whether that's all of it: what a
+    /// card or a preview reads of a long note.
+    static func head(_ text: String, lines: Int) -> (text: String, whole: Bool) {
+        let ns = text as NSString
+        var start = 0
+        for i in 0..<max(1, lines) {
+            let nl = ns.range(of: "\n", options: .literal, range: NSRange(location: start, length: ns.length - start))
+            guard nl.location != NSNotFound else { return (text, true) }
+            if i == lines - 1 { return (ns.substring(to: nl.location), nl.location + 1 == ns.length) }
+            start = nl.location + 1
+        }
+        return (text, true)
+    }
+
     /// The web addresses of the images the text shows (`![…](https://…)`).
     static func webImages(_ text: String) -> [String] {
         let ns = text as NSString

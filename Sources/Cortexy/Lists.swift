@@ -342,15 +342,15 @@ struct FolderIcon: View {
     }
 }
 
-/// Rest the pointer on this to preview `column` (a folder's contents, a note) beside the panel.
+/// Rest the pointer on this to preview `item` (a folder's contents, a note) beside the panel.
 struct PreviewOnHover: ViewModifier {
-    let column: PreviewModel.Column
+    let item: PreviewModel.Item
     @Local private var frame = NoteCard.FrameBox() // a box, so scrolling doesn't redraw
 
     func body(content: Content) -> some View {
         content
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame.rect = $0 }
-            .onHover { PanelController.shared?.preview.hover(column, inside: $0, rect: frame.rect) }
+            .onHover { PanelController.shared?.preview.hover(item, inside: $0, rect: frame.rect) }
     }
 }
 
@@ -389,7 +389,7 @@ extension View {
     /// A page with nothing to scroll (an empty one, a lock): the panel gives it `height`.
     func fitsPanel(_ nav: Nav, height: CGFloat) -> some View { modifier(FitsPanel(nav: nav, screen: nav.screenKey, fixed: height)) }
 
-    func previewOnHover(_ column: PreviewModel.Column) -> some View { modifier(PreviewOnHover(column: column)) }
+    func previewOnHover(_ item: PreviewModel.Item) -> some View { modifier(PreviewOnHover(item: item)) }
 }
 
 /// Folder icons, shown as they'll look: SF Symbols in the folder's color, common emoji, or any emoji typed in.
@@ -811,16 +811,6 @@ struct NoteCard: View {
         return st
     }
 
-    /// The text up to its `lines`-th line break.
-    static func head(_ s: String, lines: Int) -> String {
-        var seen = 0
-        for i in s.indices where s[i] == "\n" {
-            seen += 1
-            if seen == lines { return String(s[..<i]) }
-        }
-        return s
-    }
-
     /// The first `limit` lines, plus (for a search result showing only its title) the first one with `match`.
     private static func lines(_ content: [(offset: Int, element: MD.Line)], limit: Int, match: String?, raw: [String]) -> [(offset: Int, element: MD.Line)] {
         let first = Array(content.prefix(limit))
@@ -853,7 +843,7 @@ struct NoteCard: View {
         let style = style
         let brief = !exporting && (look.titleOnly || note.folded) // just the title: the preview shows the rest
         // Showing just the title (and no search line to find): only the top of the note needs reading.
-        let text = brief && showMatch == nil ? Self.head(note.text, lines: 12) : note.text
+        let text = brief && showMatch == nil ? MD.head(note.text, lines: 12).text : note.text
         let raw = text.components(separatedBy: "\n") // for list nesting, which MD.Line leaves out
         let all = Array(MD.lines(text).enumerated()).filter { $0.element != .fence }
         let content = Array(all.drop { $0.element == .blank }.reversed().drop { $0.element == .blank }.reversed())

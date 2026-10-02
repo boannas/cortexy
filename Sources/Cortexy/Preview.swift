@@ -4,13 +4,13 @@ import SwiftUI
 /// What the preview shows: a path, its last level on show. A folder lists what's inside; clicking a subfolder
 /// goes into it, so any depth is reachable in the one card. A note shows in full, laid out like the editor.
 @Observable final class PreviewModel {
-    enum Column: Hashable {
+    enum Item: Hashable {
         case folder(UUID), archive, upcoming, note(UUID)
         case version(UUID, Int) // a note's kept version, by its place in the history
 
         var isText: Bool { switch self { case .note, .version: true; default: false } }
     }
-    var columns: [Column] = []
+    var path: [Item] = [] // where it is: the hovered thing, then each subfolder gone into; the last shows
     var peek: UUID?            // a note in the folder on show, rested on: its text in a second card beside
     var peekCard: CGRect = .zero
     var card: CGRect = .zero // the card, in its clear window (top-left origin): springs between places and sizes
@@ -67,7 +67,7 @@ final class PreviewController: NSObject {
         if isShowing { hide() }
         pending?.cancel()
         // The pointer may rest on a row when the scrolling stops, with no new hover event to say so.
-        if let was { hovered = was; arm(was.column, after: 0.15) }
+        if let was { hovered = was; arm(was.item, after: 0.15) }
     }
 
     /// Only the card takes clicks; the rest of the strip beside the panel lets them through to what's under it.
@@ -95,25 +95,25 @@ final class PreviewController: NSObject {
     /// leaves (see `attempt`). Hover events used to be acted on once and dropped: one that came while the list
     /// had just been scrolled, or a row's exit arriving after the next row's entry, left a row with no preview
     /// until the pointer went off it and back.
-    func hover(_ column: PreviewModel.Column, inside: Bool, rect: CGRect) {
+    func hover(_ item: PreviewModel.Item, inside: Bool, rect: CGRect) {
         guard inside else {
-            if hovered?.column == column { hovered = nil } // (never one that came after: exits can arrive late)
+            if hovered?.item == item { hovered = nil } // (never one that came after: exits can arrive late)
             return
         }
         guard let panel = PanelController.shared?.panel, let content = panel.contentView else { return }
         let at = panel.convertToScreen(NSRect(x: rect.minX, y: content.bounds.height - rect.maxY, width: rect.width, height: rect.height))
-        hovered = (column, at)
-        if model.shown, model.columns.first == column { // already on show (or fading out: shown again)
+        hovered = (item, at)
+        if model.shown, model.path.first == item { // already on show (or fading out: shown again)
             source = at
             pending?.cancel()
             pending = nil
             return
         }
-        arm(column)
+        arm(item)
     }
 
     /// What the pointer is resting on now, on screen.
-    private var hovered: (column: PreviewModel.Column, rect: NSRect)?
+    private var hovered: (item: PreviewModel.Item, rect: NSRect)?
 
     /// Where the pointer is (tests say where, so they don't depend on a real hand).
     var pointer: () -> NSPoint = { NSEvent.mouseLocation }
@@ -121,23 +121,23 @@ final class PreviewController: NSObject {
     /// A short rest before the first one, so passing over rows doesn't flash windows. One showing switches
     /// after a rest too: on the way to it the pointer crosses other rows (a folder's subfolders under it),
     /// and switching to each one it passed made the card jump and show the wrong folder.
-    private func arm(_ column: PreviewModel.Column, after wait: Double? = nil) {
+    private func arm(_ item: PreviewModel.Item, after wait: Double? = nil) {
         pending?.cancel()
         let delay = Prefs.number(Prefs.previewDelay)
-        let work = DispatchWorkItem { [weak self] in self?.attempt(column) }
+        let work = DispatchWorkItem { [weak self] in self?.attempt(item) }
         pending = work
         DispatchQueue.main.asyncAfter(deadline: .now() + (wait ?? (isShowing ? min(0.3, delay) : delay)), execute: work)
     }
 
     /// The rest is over: show it if the pointer is still on it; while the list is being scrolled or an item
     /// dragged, look again soon instead of giving up.
-    private func attempt(_ column: PreviewModel.Column) {
+    private func attempt(_ item: PreviewModel.Item) {
         pending = nil
-        guard let h = hovered, h.column == column, UserDefaults.standard.bool(forKey: Prefs.hoverPreview),
+        guard let h = hovered, h.item == item, UserDefaults.standard.bool(forKey: Prefs.hoverPreview),
               let c = PanelController.shared, c.shown, NSMouseInRect(pointer(), h.rect, false) else { return }
-        if model.shown, model.columns.first == column { return }
-        if nav.dragging != nil || Date() < quietUntil { return arm(column, after: 0.15) }
-        show(column, from: h.rect)
+        if model.shown, model.path.first == item { return }
+        if nav.dragging != nil || Date() < quietUntil { return arm(item, after: 0.15) }
+        show(item, from: h.rect)
     }
 
     func hover(_ id: UUID, inside: Bool, rect: CGRect) { hover(.note(id), inside: inside, rect: rect) }
@@ -152,30 +152,30 @@ final class PreviewController: NSObject {
         timer?.invalidate()
         timer = nil
         guard model.shown else {
-            model.columns = []
+            model.path = []
             window.orderOut(nil)
             return
         }
         withAnimation(Motion.card) { model.shown = false }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in // once it has faded
             guard let self, !self.model.shown else { return }
-            self.model.columns = []
+            self.model.path = []
             self.model.peek = nil
             self.window.orderOut(nil)
         }
     }
 
-    private func show(_ column: PreviewModel.Column, from at: NSRect) {
+    private func show(_ item: PreviewModel.Item, from at: NSRect) {
         guard let c = PanelController.shared, c.shown, nav.dragging == nil, Date() >= quietUntil, NSMouseInRect(pointer(), at, false) else { return }
         source = at
         let first = !model.shown
         place(animated: !first) // level with what was hovered; its size never changes
         peekPending?.cancel()
         model.peek = nil
-        model.columns = [column]
+        model.path = [item]
         window.orderFrontRegardless()
         if first { DispatchQueue.main.async { [self] in
-            guard !model.columns.isEmpty else { return } // hidden again before it got to show
+            guard !model.path.isEmpty else { return } // hidden again before it got to show
             withAnimation(Motion.card) { model.shown = true }
         } }
         outside = 0
@@ -199,35 +199,35 @@ final class PreviewController: NSObject {
 
     // MARK: Inside the window
 
-    /// Goes into `column` (a subfolder clicked) from level `index`: what's shown is the path's last level.
-    func push(_ column: PreviewModel.Column, after index: Int) {
-        guard model.columns.indices.contains(index) else { return }
+    /// Goes into `item` (a subfolder clicked) from level `index` of the path: the path's last level is what shows.
+    func push(_ item: PreviewModel.Item, after index: Int) {
+        guard model.path.indices.contains(index) else { return }
         peekPending?.cancel()
         model.peek = nil
-        model.columns = Array(model.columns.prefix(index + 1)) + [column]
+        model.path = Array(model.path.prefix(index + 1)) + [item]
     }
 
     /// Back up to level `index` (from the path bar).
     func pop(to index: Int) {
-        guard model.columns.indices.contains(index) else { return }
+        guard model.path.indices.contains(index) else { return }
         peekPending?.cancel()
         model.peek = nil
-        model.columns = Array(model.columns.prefix(index + 1))
+        model.path = Array(model.path.prefix(index + 1))
     }
 
     /// A note row in the folder on show: resting on it shows the note in the card beside (passing over doesn't).
-    func hoverNote(_ column: PreviewModel.Column, inside: Bool) {
+    func hoverNote(_ item: PreviewModel.Item, inside: Bool) {
         peekPending?.cancel()
-        guard inside, case .note(let id) = column, model.peekCard != .zero else { return }
+        guard inside, case .note(let id) = item, model.peekCard != .zero else { return }
         let work = DispatchWorkItem { [weak self] in self?.model.peek = id }
         peekPending = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
-    func openInPanel(_ column: PreviewModel.Column) {
+    func openInPanel(_ item: PreviewModel.Item) {
         hide()
         nav.search = ""
-        switch column {
+        switch item {
         case .folder(let f): nav.route = .folder(f)
         case .archive: nav.route = .archive
         case .upcoming: nav.route = .upcoming
@@ -240,16 +240,16 @@ final class PreviewController: NSObject {
 
     struct Row: Identifiable {
         let id: String
-        let column: PreviewModel.Column
+        let item: PreviewModel.Item
         let title: String
         var detail = ""
         var folder: Folder?
         var count: Int?
         var symbol = "note.text"
-        var isFolder: Bool { if case .note = column { false } else { true } }
+        var isFolder: Bool { if case .note = item { false } else { true } }
     }
 
-    func title(_ c: PreviewModel.Column) -> String {
+    func title(_ c: PreviewModel.Item) -> String {
         switch c {
         case .archive: "Archive"
         case .upcoming: "Upcoming"
@@ -259,8 +259,8 @@ final class PreviewController: NSObject {
         }
     }
 
-    /// What a text column shows: the note, or one of its kept versions.
-    func content(_ c: PreviewModel.Column) -> Note? {
+    /// What a note page shows: the note, or one of its kept versions.
+    func content(_ c: PreviewModel.Item) -> Note? {
         switch c {
         case .note(let id):
             guard var n = nav.store.folderOf(id).flatMap({ nav.store.note($0.id, id) }) else { return nil }
@@ -275,26 +275,26 @@ final class PreviewController: NSObject {
         }
     }
 
-    /// A folder column's rows: subfolders, then notes (a smart folder's matches; Archive's archived notes).
-    func rows(_ c: PreviewModel.Column) -> [Row] {
+    /// A folder page's rows: subfolders, then notes (a smart folder's matches; Archive's archived notes).
+    func rows(_ c: PreviewModel.Item) -> [Row] {
         func note(_ n: Note) -> Row {
-            let rest = MD.lines(Self.head(n.text, lines: 16).text).drop { $0 == .blank }.dropFirst().first { $0 != .blank && $0 != .fence }
+            let rest = MD.lines(MD.head(n.text, lines: 16).text).drop { $0 == .blank }.dropFirst().first { $0 != .blank && $0 != .fence }
             let detail = (rest.map(Self.plain) ?? "").replacingOccurrences(of: #"[*_`~]|==|\[\[|\]\]"#, with: "", options: .regularExpression)
-            return Row(id: n.id.uuidString, column: .note(n.id), title: n.title, detail: detail)
+            return Row(id: n.id.uuidString, item: .note(n.id), title: n.title, detail: detail)
         }
         switch c {
         case .note, .version: return []
         case .archive: return nav.archivedNotes.map { note($0.1) }
         case .upcoming: // each task with a date; resting on one previews its note
             return nav.dueTasks.filter { !$0.done }.map { t in
-                Row(id: t.id, column: .note(t.nid), title: t.text.isEmpty ? "Untitled task" : t.text,
+                Row(id: t.id, item: .note(t.nid), title: t.text.isEmpty ? "Untitled task" : t.text,
                     detail: Nav.show(t.date, time: t.hasTime) + " · " + (nav.store.note(t.fid, t.nid)?.title ?? ""), symbol: "calendar")
             }
         case .folder(let fid):
             guard let f = nav.store.folder(fid), !nav.store.lockedAway(fid) else { return [] } // a locked folder shows nothing
             if let q = f.query { return nav.hits(Query(q)).map { note($0.1) } }
             let folders = nav.store.subfolders(fid).pinnedFirst.map { s in
-                Row(id: s.id.uuidString, column: .folder(s.id), title: s.name, folder: s,
+                Row(id: s.id.uuidString, item: .folder(s.id), title: s.name, folder: s,
                     count: s.query.map { nav.hits(Query($0)).count } ?? nav.store.noteCount(s.id))
             }
             return folders + f.shownNotes.map(note)
@@ -324,17 +324,6 @@ final class PreviewController: NSObject {
         return Prefs.isLeft ? visible.maxX - c.panel.frame.maxX - 8 : c.panel.frame.minX - 8 - visible.minX
     }
 
-    /// The first `lines` lines of `text`, and whether that's all of it.
-    static func head(_ text: String, lines: Int) -> (text: String, whole: Bool) {
-        let ns = text as NSString
-        var end = 0
-        for _ in 0..<lines {
-            let nl = ns.range(of: "\n", options: .literal, range: NSRange(location: end, length: ns.length - end))
-            guard nl.location != NSNotFound else { return (text, true) }
-            end = nl.location + 1
-        }
-        return end >= ns.length ? (text, true) : (ns.substring(to: end), false)
-    }
     static let shownLines = 200 // a preview shows this much of a long note (opening it shows the rest)
 
     /// Beside the panel, its top level with what was hovered (moved up only as far as the screen's bottom needs),
@@ -398,7 +387,7 @@ struct PreviewCard: View {
                 .shadow(color: .black.opacity(0.18), radius: 14, y: 4)
                 .offset(x: m.card.minX, y: m.card.minY)
             if let id = m.peek {
-                NoteColumn(controller: controller, column: .note(id))
+                NotePage(controller: controller, item: .note(id))
                     .id(id)
                     .previewCard()
                     .frame(width: m.peekCard.width, height: m.peekCard.height)
@@ -430,15 +419,15 @@ struct PreviewBrowser: View {
     let controller: PreviewController
 
     var body: some View {
-        let path = controller.model.columns
+        let path = controller.model.path
         VStack(spacing: 0) {
             if path.count > 1 { PathBar(controller: controller, path: path) }
             ZStack {
                 // The path's last level fills the card; going elsewhere fades it over, the card stays put.
-                if let column = path.last {
+                if let item = path.last {
                     Group {
-                        if column.isText { NoteColumn(controller: controller, column: column) }
-                        else { FolderColumn(controller: controller, index: path.count - 1, column: column) }
+                        if item.isText { NotePage(controller: controller, item: item) }
+                        else { FolderPage(controller: controller, index: path.count - 1, item: item) }
                     }
                     .id(path)
                     .transition(.opacity)
@@ -452,21 +441,21 @@ struct PreviewBrowser: View {
 }
 
 /// A folder's contents. Click a folder to look inside (in the same card); click a note to open it in the panel.
-struct FolderColumn: View {
+struct FolderPage: View {
     let controller: PreviewController
     let index: Int
-    let column: PreviewModel.Column
+    let item: PreviewModel.Item
 
     var body: some View {
-        let rows = controller.rows(column)
+        let rows = controller.rows(item)
         let model = controller.model
-        let next = model.columns.indices.contains(index + 1) ? model.columns[index + 1] : nil
+        let next = model.path.indices.contains(index + 1) ? model.path[index + 1] : nil
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Text(controller.title(column)).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Text(controller.title(item)).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 4)
                 Text("\(rows.count)").font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
-                MiniButton(symbol: "arrow.up.forward.app", help: "Open in the Panel") { controller.openInPanel(column) }
+                MiniButton(symbol: "arrow.up.forward.app", help: "Open in the Panel") { controller.openInPanel(item) }
             }
             .padding(.horizontal, 12)
             .frame(height: 40)
@@ -477,10 +466,10 @@ struct FolderColumn: View {
             ScrollView {
                 VStack(spacing: 2) {
                     ForEach(rows) { row in
-                        PreviewRowView(row: row, selected: next == row.column || (model.peek.map { .note($0) == row.column } ?? false))
+                        PreviewRowView(row: row, selected: next == row.item || (model.peek.map { .note($0) == row.item } ?? false))
                             // A folder opens in this card, a note in the panel; resting on a note shows it beside.
-                            .onTapGesture { row.isFolder ? controller.push(row.column, after: index) : controller.openInPanel(row.column) }
-                            .onHover { if !row.isFolder { controller.hoverNote(row.column, inside: $0) } }
+                            .onTapGesture { row.isFolder ? controller.push(row.item, after: index) : controller.openInPanel(row.item) }
+                            .onHover { if !row.isFolder { controller.hoverNote(row.item, inside: $0) } }
                     }
                 }
                 .padding(6)
@@ -528,7 +517,7 @@ struct PreviewRowView: View {
 /// Inside a subfolder: the folders above it, to step back to.
 struct PathBar: View {
     let controller: PreviewController
-    let path: [PreviewModel.Column] // as drawn: the live one empties as the card fades out (0..<-1 crashed)
+    let path: [PreviewModel.Item] // as drawn: the live one empties as the card fades out (0..<-1 crashed)
 
     var body: some View {
         let above = max(0, path.count - 1)
@@ -551,9 +540,9 @@ struct PathBar: View {
 }
 
 /// A note in full, read-only and laid out like the editor. Clicking its text opens it in the panel.
-struct NoteColumn: NSViewRepresentable {
+struct NotePage: NSViewRepresentable {
     let controller: PreviewController
-    let column: PreviewModel.Column
+    let item: PreviewModel.Item
 
     func makeNSView(context: Context) -> NSScrollView {
         let text = PreviewController.makeText()
@@ -567,13 +556,13 @@ struct NoteColumn: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let text = scroll.documentView as? MarkdownTextView, context.coordinator.shown != column,
-              let n = controller.content(column) else { return }
-        context.coordinator.shown = column
+        guard let text = scroll.documentView as? MarkdownTextView, context.coordinator.shown != item,
+              let n = controller.content(item) else { return }
+        context.coordinator.shown = item
         PreviewController.configure(text, n, store: controller.nav.store)
-        text.onPreviewClick = { [controller, column] in controller.openInPanel(column) }
+        text.onPreviewClick = { [controller, item] in controller.openInPanel(item) }
         text.frame = NSRect(x: 0, y: 0, width: controller.cardWidth, height: 1)
-        let head = PreviewController.head(n.text, lines: PreviewController.shownLines)
+        let head = MD.head(n.text, lines: PreviewController.shownLines)
         text.load(head.whole ? head.text : head.text + "\n…")
         text.setSelectedRange(NSRange(location: 0, length: 0))
         text.sizeToFit()
@@ -584,7 +573,7 @@ struct NoteColumn: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         let controller: PreviewController
-        var shown: PreviewModel.Column?
+        var shown: PreviewModel.Item?
         init(controller: PreviewController) { self.controller = controller }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {

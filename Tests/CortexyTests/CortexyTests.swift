@@ -432,32 +432,32 @@ private func tempDir() -> URL {
     #expect(p.rows(.folder(smart)).map(\.id) == [plan.uuidString]) // a smart folder lists its matches
     // Upcoming lists each dated task (two in one note are two rows); resting on one previews its note.
     let due = s.addNote(to: work, text: "# Bills\n- [ ] rent 📅 2099-01-02\n- [ ] water 📅 2099-01-03\n- [x] old 📅 2099-01-01")!
-    #expect(p.rows(.upcoming).map(\.title) == ["rent", "water"] && p.rows(.upcoming).allSatisfy { $0.column == .note(due) && !$0.isFolder })
+    #expect(p.rows(.upcoming).map(\.title) == ["rent", "water"] && p.rows(.upcoming).allSatisfy { $0.item == .note(due) && !$0.isFolder })
     #expect(Set(p.rows(.upcoming).map(\.id)).count == 2)
     s.deleteNote(work, due)
-    p.model.columns = [.folder(work)]
+    p.model.path = [.folder(work)]
     p.push(.folder(proj), after: 0)
     p.push(.folder(deep), after: 1)
     p.push(.note(plan), after: 2)
-    #expect(p.model.columns == [.folder(work), .folder(proj), .folder(deep), .note(plan)])
+    #expect(p.model.path == [.folder(work), .folder(proj), .folder(deep), .note(plan)])
     p.push(.note(memo), after: 0)                                   // clicking higher up closes the deeper columns
-    #expect(p.model.columns == [.folder(work), .note(memo)])
+    #expect(p.model.path == [.folder(work), .note(memo)])
     #expect(p.acceptsFirstClick) // it's never the key window, so a first click that only "focuses" would do nothing
 
     // However deep it goes, the card shows the last level; the ones above wait in the path bar.
     let d4 = s.addFolder("Week 1", in: deep)
-    p.model.columns = [.folder(work), .folder(proj), .folder(deep)]
+    p.model.path = [.folder(work), .folder(proj), .folder(deep)]
     p.push(.folder(d4), after: 2)
-    #expect(p.model.columns.last == .folder(d4) && p.model.columns.count == 4)
+    #expect(p.model.path.last == .folder(d4) && p.model.path.count == 4)
     p.pop(to: 1)                                                    // a crumb: back to Projects
-    #expect(p.model.columns == [.folder(work), .folder(proj)])
+    #expect(p.model.path == [.folder(work), .folder(proj)])
     p.openInPanel(.note(memo))                                      // clicking a note row opens it
-    #expect(nav.route == .note(work, memo) && p.model.columns.isEmpty)
+    #expect(nav.route == .note(work, memo) && p.model.path.isEmpty)
 
     // A long note shows its start (opening it shows the rest).
     let long = (1...500).map { "line \($0)" }.joined(separator: "\n")
-    #expect(PreviewController.head(long, lines: 200).text.components(separatedBy: "\n").count == 201)
-    #expect(!PreviewController.head(long, lines: 200).whole && PreviewController.head("short", lines: 200) == ("short", true))
+    #expect(MD.head(long, lines: 200).text.components(separatedBy: "\n").count == 200)
+    #expect(!MD.head(long, lines: 200).whole && MD.head("short", lines: 200) == ("short", true) && MD.head("a\n", lines: 1) == ("a", true))
 }
 
 /// Tab nests a list item by one clear level; wrapped lines line up with the item's text.
@@ -639,7 +639,7 @@ private final class StubImages: URLProtocol {
     for _ in 0..<100 where Attachments.imageSoon(at: url) == nil { try await Task.sleep(for: .milliseconds(50)) } // up to 5 s under load
     #expect(Attachments.imageSoon(at: url)?.size.width == 300)
 
-    #expect(NoteCard.head("a\nb\nc\nd", lines: 2) == "a\nb" && NoteCard.head("a\nb", lines: 5) == "a\nb")
+    #expect(MD.head("a\nb\nc\nd", lines: 2) == ("a\nb", false) && MD.head("a\nb", lines: 5) == ("a\nb", true))
 }
 
 @MainActor private func editorIn(_ v: NSView) -> MarkdownTextView? {
@@ -856,8 +856,7 @@ private final class StubImages: URLProtocol {
     nav.search = "9999"
     #expect(nav.searchHits.isEmpty)
     nav.search = ""
-    s.deleteIfEmpty(Folder.rootID, n)
-    #expect(s.note(Folder.rootID, n) != nil)
+    #expect(!s.note(Folder.rootID, n)!.isBlank) // its text is sealed, not empty: leaving it never drops it
     let exported = try s.exportMarkdown(to: out)
     #expect(!(try String(contentsOf: exported.appendingPathComponent("Bank.md"), encoding: .utf8)).contains("9999"))
 
@@ -1575,12 +1574,12 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(abs(p.cardRect.maxY - min(m.y + 10, visible.maxY)) < 1 || p.cardRect.minY <= visible.minY + 1) // level with the row
     p.hover(.folder(small), inside: true, rect: rect)
     try await Task.sleep(for: .milliseconds(500))
-    #expect(p.model.columns == [.folder(small)] && p.model.card == card)
+    #expect(p.model.path == [.folder(small)] && p.model.card == card)
     p.push(.folder(sub), after: 0)
-    #expect(p.model.columns == [.folder(small), .folder(sub)] && p.model.card == card)
+    #expect(p.model.path == [.folder(small), .folder(sub)] && p.model.card == card)
     p.pop(to: 0)
     p.pop(to: -1)                                                   // nothing above: stays (it used to empty, then crash)
-    #expect(p.model.columns == [.folder(small)])
+    #expect(p.model.path == [.folder(small)])
     p.hoverNote(.note(note), inside: true)
     try await Task.sleep(for: .milliseconds(500))
     if let beside = p.peekRect {
@@ -1608,9 +1607,9 @@ private func pngFile(in dir: URL) throws -> String {
     let rect = CGRect(x: m.x - f.minX - 10, y: f.height - (m.y - f.minY) - 10, width: 20, height: 20)
     let p = c.preview
     p.pointer = { m } // resting on the row, whatever the real pointer does meanwhile
-    func shows(_ column: PreviewModel.Column, within seconds: Double = 2.5) async throws -> Bool {
-        for _ in 0..<Int(seconds * 20) where !(p.isShowing && p.model.columns.first == column) { try await Task.sleep(for: .milliseconds(50)) }
-        return p.isShowing && p.model.columns.first == column
+    func shows(_ item: PreviewModel.Item, within seconds: Double = 2.5) async throws -> Bool {
+        for _ in 0..<Int(seconds * 20) where !(p.isShowing && p.model.path.first == item) { try await Task.sleep(for: .milliseconds(50)) }
+        return p.isShowing && p.model.path.first == item
     }
 
     // The pointer lands on a row just as the list stopped scrolling: it shows once things are quiet.
@@ -1654,9 +1653,9 @@ private func pngFile(in dir: URL) throws -> String {
     // Two rows in the panel's top-left coordinates, the second well above the first (and above A's card).
     let rowA = CGRect(x: 40, y: 420, width: 280, height: 40), rowB = CGRect(x: 40, y: 60, width: 280, height: 40)
     func center(_ r: CGRect) -> NSPoint { NSPoint(x: f.minX + r.midX, y: f.maxY - r.midY) }
-    func shows(_ column: PreviewModel.Column) async throws -> Bool {
-        for _ in 0..<60 where !(p.isShowing && p.model.columns.first == column) { try await Task.sleep(for: .milliseconds(50)) }
-        return p.isShowing && p.model.columns.first == column
+    func shows(_ item: PreviewModel.Item) async throws -> Bool {
+        for _ in 0..<60 where !(p.isShowing && p.model.path.first == item) { try await Task.sleep(for: .milliseconds(50)) }
+        return p.isShowing && p.model.path.first == item
     }
     p.pointer = { center(rowA) }
     p.hover(.folder(a), inside: true, rect: rowA)

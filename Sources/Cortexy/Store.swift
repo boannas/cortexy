@@ -605,12 +605,6 @@ struct Folder: Codable, Identifiable, Hashable, Pinnable {
         return n.id
     }
 
-    func deleteIfEmpty(_ fid: UUID, _ nid: UUID) {
-        if let n = note(fid, nid), n.isBlank {
-            deleteNote(fid, nid)
-        }
-    }
-
     func moveNote(_ nid: UUID, from: UUID, to: UUID) {
         guard from != to, var n = note(from, nid), let ti = folderIndex(to) else { return }
         deleteNote(from, nid)

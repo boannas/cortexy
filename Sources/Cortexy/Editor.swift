@@ -1600,7 +1600,9 @@ struct MarkdownEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ n: Notification) {
             guard let tv = n.object as? MarkdownTextView else { return }
             tv.restyle()
-            if let key = parent.caretKey { MarkdownEditor.carets[key] = tv.selectedRange().location }
+            // Only while it's on screen: an editor being taken away (the note left) moves its caret too, and that
+            // overwrote where you'd been, so the note reopened somewhere else.
+            if let key = parent.caretKey, tv.window != nil { MarkdownEditor.carets[key] = tv.selectedRange().location }
         }
 
         func textView(_ textView: NSTextView, doCommandBy sel: Selector) -> Bool {

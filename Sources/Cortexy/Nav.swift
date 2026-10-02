@@ -476,7 +476,7 @@ import UniformTypeIdentifiers
         guard !n.snippet else { return copy(n) }
         search = ""
         route = .note(fid, n.id)
-        if let find { DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { MarkdownTextView.active?.reveal(text: find) } }
+        if let find { whenOpen(n.id) { $0.reveal(text: find) } }
     }
 
     // MARK: Keyboard selection
@@ -733,7 +733,7 @@ import UniformTypeIdentifiers
         guard let f = store.folderOf(id) else { return }
         search = ""
         route = .note(f.id, id)
-        if let line { DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { MarkdownTextView.active?.reveal(line: line) } }
+        if let line { whenOpen(id) { $0.reveal(line: line) } }
     }
 
     // MARK: Version history
@@ -834,9 +834,15 @@ import UniformTypeIdentifiers
         search = ""
         route = .note(fid, nid)
         guard let caret else { return }
+        whenOpen(nid) { $0.setSelectedRange(NSRange(location: min(caret, ($0.string as NSString).length), length: 0)) }
+    }
+
+    /// `body` with the note's editor, once its page is up (a moment later). Only that note's: going elsewhere
+    /// quickly meanwhile left another note's editor the active one, and its caret jumped.
+    private func whenOpen(_ nid: UUID, _ body: @escaping (MarkdownTextView) -> Void) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            guard let tv = MarkdownTextView.active else { return }
-            tv.setSelectedRange(NSRange(location: min(caret, (tv.string as NSString).length), length: 0))
+            guard let tv = MarkdownTextView.active, tv.noteID == nid else { return }
+            body(tv)
         }
     }
 
