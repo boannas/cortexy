@@ -39,7 +39,7 @@ import UniformTypeIdentifiers
             marked = []
             markAnchor = nil
             iconPicking = nil
-            renaming = nil    // a rename left half done is cancelled, not left to grab focus later
+            commitRename()    // a rename left half done is kept as typed (Esc cancels), not left to grab focus later
             historyNote = nil // the Version History overlay belongs to the screen it was opened on
             dragging = nil    // a drag the panel closed under never ended
             dropTarget = nil
@@ -52,6 +52,7 @@ import UniformTypeIdentifiers
         didSet {
             guard oldValue != search else { return }
             selection = nil
+            hintIndex = nil
             marked = [] // marks on hits no longer shown would be deleted unseen
             // ">" in the search box is the command list, as in ⌘O.
             if search.hasPrefix(">") {
@@ -84,6 +85,46 @@ import UniformTypeIdentifiers
     @ObservationIgnored var password: String?
     @ObservationIgnored private var lastSnapshot: [UUID: Date] = [:]
     var renaming: UUID?
+    var renameDraft = ""
+
+    /// Ends a rename with what was typed (a name of nothing keeps the old one).
+    func commitRename() {
+        guard let id = renaming else { return }
+        renaming = nil
+        let n = renameDraft.trimmingCharacters(in: .whitespaces)
+        if !n.isEmpty, store.folder(id)?.name != n { store.updateFolder(id) { $0.name = n } }
+    }
+
+    /// On a smart folder's page (its query bar is on screen, not the search box).
+    var onSmartFolder: Bool { if case .folder(let f) = route { store.folder(f)?.query != nil } else { false } }
+
+    /// The hint the arrow keys are on in the search box's list (nil: none, the keys go to the results).
+    var hintIndex: Int?
+
+    /// ↓ / ↑ in the search box walk its hint list first, then on to the results. True when it took the key.
+    func moveHint(_ delta: Int) -> Bool {
+        let shown = search.isEmpty ? 0 : min(5, searchHints(search).count)
+        guard shown > 0 else { return false }
+        if delta > 0 {
+            let next = (hintIndex ?? -1) + 1
+            if next < shown { hintIndex = next; return true }
+            hintIndex = nil // past the last one: on to the results
+            return false
+        }
+        guard let i = hintIndex else { return false }
+        hintIndex = i > 0 ? i - 1 : nil // ↑ off the first: back to the field
+        return true
+    }
+
+    /// Return on a hint the arrows are on.
+    func applyHighlightedHint() -> Bool {
+        guard let i = hintIndex, !search.isEmpty else { return false }
+        let hints = searchHints(search)
+        hintIndex = nil
+        guard hints.indices.contains(i) else { return false }
+        apply(hints[i])
+        return true
+    }
     var iconPicking: UUID? // folder row showing the icon picker under it
     var selection: UUID?   // keyboard selection in the current list
     var marked: Set<UUID> = [] // ⌘/⇧-clicked rows the bulk bar acts on
@@ -650,7 +691,16 @@ import UniformTypeIdentifiers
     }
 
     /// Every task with a date, soonest first.
-    var dueTasks: [DueTask] { Self.dueTasks(in: store.liveFolders) }
+    var dueTasks: [DueTask] {
+        _ = store.folders.count // observe changes even when the cache answers
+        let stamp = [store.edits, store.openFolders.count]
+        if let c = dueCache, c.stamp == stamp { return c.tasks }
+        let tasks = Self.dueTasks(in: store.liveFolders)
+        dueCache = (stamp, tasks)
+        return tasks
+    }
+    // Home asks on every render, and every ask read all notes with dates (and parsed each date): only when something changed now.
+    @ObservationIgnored private var dueCache: (stamp: [Int], tasks: [DueTask])?
 
     static func dueTasks(in folders: [Folder]) -> [DueTask] {
         folders.flatMap { f in

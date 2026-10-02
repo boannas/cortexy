@@ -547,6 +547,13 @@ final class PanelController: NSObject {
             if shift, let action = MarkdownTextView.shiftFormat[key] { return NSApp.sendAction(Selector(action), to: nil, from: w) }
             if !shift, let action = format[key] { return NSApp.sendAction(Selector(action), to: nil, from: w) }
         }
+        if let tv = w.firstResponder as? MarkdownTextView { // find in this window's note
+            switch (key, shift) {
+            case ("f", false): tv.find(.showFindInterface); return true
+            case ("g", _) where tv.findBarShown: tv.find(shift ? .previousMatch : .nextMatch); return true
+            default: break
+            }
+        }
         switch (key, shift) {
         case ("z", false): w.firstResponder?.undoManager?.undo()
         case ("z", true): w.firstResponder?.undoManager?.redo()
@@ -593,7 +600,8 @@ final class PanelController: NSObject {
         if responder?.hasMarkedText() == true { return false } // an input method is composing (CJK etc.)
         let inText = responder != nil
         // The search box is the only field editor outside the note editor (bar the rename field).
-        let inSearch = responder?.isFieldEditor == true && !isEditingNote && nav.renaming == nil && nav.iconPicking == nil
+        // (A smart folder's query bar is a field too, but not the search box: no hints, Tab and ↓ are the field's own.)
+        let inSearch = responder?.isFieldEditor == true && !isEditingNote && nav.renaming == nil && nav.iconPicking == nil && !nav.onSmartFolder
         let code = Int(e.keyCode)
 
         // The ⌘O / ⌘P list owns the arrows, Return and Esc while it's up; typing goes to its field.
@@ -624,10 +632,19 @@ final class PanelController: NSObject {
                 if nav.iconPicking != nil { nav.iconPicking = nil } else if !nav.marked.isEmpty { nav.marked = [] } else if !nav.search.isEmpty { nav.search = "" } else { hide() }
                 return true
             case kVK_Tab where inSearch:
-                guard let first = nav.searchHints(nav.search).first else { return false }
-                nav.apply(first) // Tab takes the first hint
+                let hints = nav.searchHints(nav.search)
+                guard let hint = nav.hintIndex.flatMap({ hints.indices.contains($0) ? hints[$0] : nil }) ?? hints.first else { return false }
+                nav.apply(hint) // Tab takes the first hint (or the one the arrows are on)
                 return true
-            case kVK_DownArrow where !inText || inSearch, kVK_UpArrow where !inText:
+            case kVK_DownArrow where inSearch, kVK_UpArrow where inSearch && nav.hintIndex != nil:
+                if nav.moveHint(code == kVK_DownArrow ? 1 : -1) { return true } // along the hint list first
+                if code == kVK_UpArrow { return true }
+                panel.makeFirstResponder(nil)
+                nav.moveSelection(1)
+                return true
+            case kVK_Return where inSearch && nav.hintIndex != nil && nav.applyHighlightedHint():
+                return true
+            case kVK_DownArrow where !inText, kVK_UpArrow where !inText:
                 if inSearch { panel.makeFirstResponder(nil) }
                 nav.moveSelection(code == kVK_DownArrow ? 1 : -1)
                 return true
@@ -666,7 +683,9 @@ final class PanelController: NSObject {
         case (",", false): SettingsWindow.show()
         case ("w", false): hide()
         case ("q", false): NSApp.terminate(nil)
-        case ("z", false) where nav.undoAction != nil && !isEditingNote && nav.renaming == nil && nav.iconPicking == nil: nav.undoLast()
+        // ⌘Z in the search box undoes its typing; the toast's Undo (a deleted note) only when there's none.
+        case ("z", false) where nav.undoAction != nil && !isEditingNote && nav.renaming == nil && nav.iconPicking == nil
+            && !(inText && responder?.undoManager?.canUndo == true): nav.undoLast()
         case ("a", false) where !inText: nav.markAll()
         case ("z", false): panel.firstResponder?.undoManager?.undo()
         case ("z", true): panel.firstResponder?.undoManager?.redo()

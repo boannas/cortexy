@@ -66,8 +66,10 @@ struct RootView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .overlay { if nav.palette != nil { PaletteView(nav: nav) } }
-        .overlay { if let n = nav.historyNote { HistoryView(nav: nav, nid: n) } }
+        .overlay { if nav.palette != nil { PaletteView(nav: nav).transition(.opacity) } }
+        .overlay { if let n = nav.historyNote { HistoryView(nav: nav, nid: n).transition(.opacity) } }
+        .animation(Motion.quick, value: nav.palette != nil)
+        .animation(Motion.quick, value: nav.historyNote)
         .clipped() // nothing shows past the card while it springs (a page fading out, ⌘O); a rounded clip cost frames
         .environment(\.openURL, OpenURLAction { url in nav.openLink(url) ? .handled : .systemAction })
         .background(theme.panelColor ?? .clear, in: .rect(cornerRadius: radius))
@@ -78,10 +80,13 @@ struct RootView: View {
         .animation(Motion.standard, value: nav.route)
         .animation(Motion.standard, value: nav.toast)
         .animation(Motion.standard, value: nav.marked.isEmpty)
+        .animation(Motion.quick, value: searchFocused && !nav.searchHints(nav.search).isEmpty) // the hint list fades in and out
         // ⌘O / ⌘P and Version History float over the page: room for them even over a short one.
         .onChange(of: nav.palette != nil || nav.historyNote != nil) { _, open in nav.panel?.needs(atLeast: open ? 480 : 0) }
         .onChange(of: nav.searchFocus) {
-            if isEditing { nav.back() }
+            // From a note (⇧⌘F): out to its folder, where the search box is. Not Back, which went to wherever the
+            // note was reached from (another note, say: the search box still wasn't there).
+            if case .note(let f, _) = nav.route { nav.route = .folder(f) }
             searchFocused = true
         }
         .confirmationDialog(deleteTitle, isPresented: $nav.confirming, presenting: nav.pendingDelete) { d in
@@ -342,7 +347,7 @@ struct SearchHints: View {
                 }
             } else {
                 VStack(spacing: 0) {
-                    ForEach(hints.prefix(5)) { h in
+                    ForEach(Array(hints.prefix(5).enumerated()), id: \.element.id) { i, h in
                         pick(h) {
                             HStack(spacing: 8) {
                                 Text(h.label).font(.system(size: 12.5)).lineLimit(1)
@@ -351,6 +356,7 @@ struct SearchHints: View {
                             }
                             .padding(.horizontal, 12)
                             .frame(height: 24)
+                            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.cortexyAccent.opacity(nav.hintIndex == i ? 0.22 : 0)))
                             .contentShape(Rectangle())
                         }
                     }

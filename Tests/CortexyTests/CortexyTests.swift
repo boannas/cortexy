@@ -1797,3 +1797,67 @@ private func pngFile(in dir: URL) throws -> String {
     nav.removeFolderLock(f)
     #expect(s.note(f, n)!.lock == nil && s.note(f, n)!.text == "# Kept\nbody")
 }
+
+/// The search box's hint list takes the arrow keys first (then the results do), and Return applies the hint
+/// they're on; a rename left half typed is kept when you go elsewhere (Esc cancels it).
+@MainActor @Test func hintKeysAndHalfTypedRenames() {
+    let s = Store(directory: tempDir())
+    let nav = Nav(store: s)
+    _ = s.addNote(to: Folder.rootID, text: "# A\n#alpha #beta #gamma")!
+    nav.search = "#"
+    let n = min(5, nav.searchHints("#").count)
+    #expect(n >= 3 && nav.hintIndex == nil)
+    #expect(nav.moveHint(1) && nav.hintIndex == 0)
+    #expect(nav.moveHint(1) && nav.hintIndex == 1)
+    #expect(nav.moveHint(-1) && nav.hintIndex == 0)
+    #expect(nav.moveHint(-1) && nav.hintIndex == nil)               // off the first: back to the field
+    #expect(!nav.moveHint(-1))                                      // nothing to go up in: not taken
+    for _ in 0..<n { _ = nav.moveHint(1) }
+    #expect(nav.hintIndex == n - 1)
+    #expect(!nav.moveHint(1) && nav.hintIndex == nil)               // past the last: the results' turn
+    _ = nav.moveHint(1); _ = nav.moveHint(1)
+    let wanted = nav.searchHints("#")[1]
+    #expect(nav.applyHighlightedHint() && nav.search == wanted.insert && nav.hintIndex == nil)
+    nav.search = ""
+    #expect(!nav.moveHint(1))                                       // no list while the box is empty
+
+    let f = s.addFolder("Old name")
+    nav.renaming = f
+    nav.renameDraft = "  New name "
+    nav.route = .folder(f)                                          // goes elsewhere before pressing Return
+    #expect(s.folder(f)!.name == "New name" && nav.renaming == nil)
+    nav.renaming = f
+    nav.renameDraft = "   "
+    nav.route = .home
+    #expect(s.folder(f)!.name == "New name")                        // nothing typed keeps the name
+    let smart = s.addFolder("Smart")
+    s.updateFolder(smart) { $0.query = "#alpha" }
+    nav.route = .folder(smart)
+    #expect(nav.onSmartFolder)
+    nav.route = .folder(f)
+    #expect(!nav.onSmartFolder)
+}
+
+/// A note over 20,000 characters is laid out where it's looked at (it used to be laid out from the top down to
+/// the caret first: half a second for the first key in its middle). It still scrolls to the caret, edits and reads back.
+@MainActor @Test func longNotesAreLaidOutOnDemand() {
+    Prefs.register()
+    let text = (1...1500).map { "line \($0) with some words to fill the width of the editor a bit" }.joined(separator: "\n")
+    #expect(text.count > 80_000)
+    let h = EditorHarness(dir: tempDir())
+    let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 320, height: 300))
+    scroll.documentView = h.tv
+    h.tv.load(text)
+    #expect(h.tv.layoutManager?.allowsNonContiguousLayout == true)
+    let middle = (text as NSString).range(of: "line 750 ").location
+    h.tv.setSelectedRange(NSRange(location: middle, length: 0))
+    h.tv.insertText("X", replacementRange: h.tv.selectedRange())
+    h.tv.scrollRangeToVisible(h.tv.selectedRange())
+    let lm = h.tv.layoutManager!, tc = h.tv.textContainer!
+    let g = lm.glyphIndexForCharacter(at: h.tv.selectedRange().location - 1)
+    let r = lm.boundingRect(forGlyphRange: NSRange(location: g, length: 1), in: tc).offsetBy(dx: h.tv.textContainerOrigin.x, dy: h.tv.textContainerOrigin.y)
+    #expect(h.tv.visibleRect.intersects(r) && r.minY > 1000)       // scrolled down to it, not left at the top
+    #expect(h.tv.markdown() == (text as NSString).replacingCharacters(in: NSRange(location: middle, length: 0), with: "X"))
+    h.tv.load("short")                                              // a short note goes back to contiguous layout
+    #expect(h.tv.layoutManager?.allowsNonContiguousLayout == false)
+}

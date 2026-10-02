@@ -317,6 +317,7 @@ struct FolderView: View {
         let fid = folder.id
         return NoteCard(note: n, store: nav.store, selected: nav.selection == n.id, marked: nav.marked.contains(n.id),
                         toggle: { nav.toggleTask(fid, n.id, line: $0) }, onCopy: { nav.copy(n) }, onPreview: NoteCard.preview(n.id))
+            .equatable()
             .onTapGesture { nav.click(n.id) { nav.activate(fid, n) } }
             .contextMenu { NoteMenu(nav: nav, fid: fid, note: n) }
             // Sorted folders still drag (into other folders); only manual order reorders.
@@ -527,7 +528,6 @@ struct FolderRow: View {
     var depth = 0
     var count: Int?
     @Local private var hover = false
-    @Local private var name = ""
     @FocusState private var editing: Bool
 
     var body: some View {
@@ -552,11 +552,11 @@ struct FolderRow: View {
             }
             FolderIcon(folder: folder).font(.system(size: 15)).frame(width: 20)
             if nav.renaming == folder.id {
-                TextField("Folder Name", text: $name)
+                TextField("Folder Name", text: $nav.renameDraft)
                     .textFieldStyle(.plain)
                     .focused($editing)
                     .onSubmit(commit)
-                    .onAppear { name = folder.name; editing = true }
+                    .onAppear { nav.renameDraft = folder.name; editing = true }
                     .onChange(of: editing) { if !editing { commit() } }
             } else {
                 Text(folder.name).lineLimit(1)
@@ -586,10 +586,8 @@ struct FolderRow: View {
     static var radius: CGFloat { max(4, Themes.shared.look.cornerRadius - 4) }
 
     private func commit() {
-        let n = name.trimmingCharacters(in: .whitespaces)
         guard nav.renaming == folder.id else { return }
-        if !n.isEmpty { nav.store.updateFolder(folder.id) { $0.name = n } }
-        nav.renaming = nil
+        nav.commitRename()
     }
 }
 
@@ -723,6 +721,7 @@ struct SearchResults: View {
                                 NoteCard(note: n, store: nav.store, folderName: f.id == Folder.rootID ? nil : nav.store.path(f.id),
                                          selected: nav.selection == n.id, marked: nav.marked.contains(n.id), highlight: q.words, showMatch: q.words.first,
                                          toggle: { nav.toggleTask(f.id, n.id, line: $0) }, onCopy: { nav.copy(n) }, onPreview: NoteCard.preview(n.id))
+                                    .equatable()
                                     .onTapGesture { nav.click(n.id) { nav.activate(f.id, n, find: q.words.first) } }
                                     .contextMenu { NoteMenu(nav: nav, fid: f.id, note: n) }
                                     .id(n.id)
@@ -764,6 +763,15 @@ struct SmartQueryBar: View {
 }
 
 // MARK: Note card
+
+/// A card draws from these alone (the closures only act on the note they were made for), so one that is the same
+/// as before isn't evaluated again: typing in the search box re-made every card in the list.
+extension NoteCard: Equatable {
+    static func == (a: NoteCard, b: NoteCard) -> Bool {
+        a.note == b.note && a.folderName == b.folderName && a.selected == b.selected && a.marked == b.marked
+            && a.exporting == b.exporting && a.highlight == b.highlight && a.showMatch == b.showMatch
+    }
+}
 
 struct NoteCard: View {
     let note: Note

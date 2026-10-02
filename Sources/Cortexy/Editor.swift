@@ -617,6 +617,9 @@ final class MarkdownTextView: NSTextView {
             NotificationCenter.default.addObserver(self, selector: #selector(webImageArrived(_:)), name: WebImages.arrived, object: nil)
         }
         textStorage?.delegate = self
+        // A long note is laid out where it's looked at, not from its start to the caret first (the editor stops
+        // measuring such a note anyway, see `fit`); short ones stay contiguous, which keeps their scrolling exact.
+        layoutManager?.allowsNonContiguousLayout = (markdown as NSString).length >= 20_000
         let s = NSMutableAttributedString(string: markdown, attributes: Styler.base(style))
         _ = attach(in: s, range: NSRange(location: 0, length: s.length))
         textStorage?.setAttributedString(s)

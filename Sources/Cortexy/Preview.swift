@@ -518,6 +518,9 @@ struct PreviewRowView: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .help(row.isFolder ? "Click to look inside" : "Rest here to read it, click to open it")
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint(row.isFolder ? "Looks inside" : "Opens the note")
     }
 }
 
