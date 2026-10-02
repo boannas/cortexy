@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="Cortexy Terminology">
+    <suite name="Cortexy Suite" code="Crtx" description="Create notes and control the Cortexy panel.">
+        <command name="add note" code="CrtxAddN" description="Create a note. Returns its id.">
+            <cocoa class="CXAddNoteCommand"/>
+            <direct-parameter type="text" description="The note text (Markdown)."/>
+            <parameter name="in folder" code="Fold" type="text" optional="yes" description="Folder name; created if missing.">
+                <cocoa key="folder"/>
+            </parameter>
+            <parameter name="showing" code="Show" type="boolean" optional="yes" description="Open the new note in the panel.">
+                <cocoa key="show"/>
+            </parameter>
+            <result type="text" description="The new note's id."/>
+        </command>
+        <command name="search notes" code="CrtxSrch" description="Text of every note containing a string.">
+            <cocoa class="CXSearchCommand"/>
+            <direct-parameter type="text"/>
+            <result><type type="text" list="yes"/></result>
+        </command>
+        <command name="show panel" code="CrtxShow" description="Slide the panel in."><cocoa class="CXShowCommand"/></command>
+        <command name="hide panel" code="CrtxHide" description="Slide the panel out."><cocoa class="CXHideCommand"/></command>
+        <command name="toggle panel" code="CrtxTogl" description="Show or hide the panel."><cocoa class="CXToggleCommand"/></command>
+    </suite>
+</dictionary>

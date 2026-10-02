@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cortexy}",
+            "name": "Debug Cortexy",
+            "target": "Cortexy",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Cortexy"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cortexy}",
+            "name": "Release Cortexy",
+            "target": "Cortexy",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Cortexy"
+        }
+    ]
+}

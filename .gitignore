@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+.swiftpm/
+build/
+xcuserdata/
+*.xcuserstate
+demo/
+tools/demo/.bin/
