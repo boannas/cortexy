@@ -252,6 +252,10 @@ enum Styler {
             }
         }
         for (r, a) in kept { storage.addAttributes(a.compactMapValues { $0 }, range: r) }
+        // The fonts set above (the system font, say) may have no Thai: the text storage swaps in one that does,
+        // but only for edits it processes itself. Styled from inside one (the caret moving as you type), it
+        // didn't, and Thai typed in the paragraph showed blank glyphs until the caret went elsewhere.
+        storage.invalidateAttributes(in: full)
         storage.endEditing()
     }
 

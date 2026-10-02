@@ -1861,3 +1861,29 @@ private func pngFile(in dir: URL) throws -> String {
     h.tv.load("short")                                              // a short note goes back to contiguous layout
     #expect(h.tv.layoutManager?.allowsNonContiguousLayout == false)
 }
+
+/// Thai typed into a paragraph showed nothing until the caret left it: the paragraph was restyled (system
+/// font, no Thai) from inside the text storage's handling of the keystroke, where it doesn't swap in a font
+/// that has the letters, so they were drawn as blank glyphs.
+@MainActor @Test func thaiTypedInAParagraphIsDrawn() {
+    Prefs.register()
+    let h = RestylingHarness()
+    h.tv.load("# หัวข้อ\n- [ ] งาน\n")
+    func blank() -> [Int] {
+        let lm = h.tv.layoutManager!, ns = h.tv.string as NSString
+        lm.ensureLayout(for: h.tv.textContainer!)
+        return (0..<ns.length).filter { i in
+            let c = ns.character(at: i)
+            guard c >= 0x0E00 && c <= 0x0E7F else { return false }
+            let g = lm.glyphIndexForCharacter(at: i)
+            return g < lm.numberOfGlyphs && lm.cgGlyph(at: g) == 0
+        }
+    }
+    for at in [(h.tv.string as NSString).length, ("# หัวข้อ\n- [ ] งาน" as NSString).length] { // a new line; inside a task
+        h.tv.setSelectedRange(NSRange(location: at, length: 0))
+        for ch in ["ส", "ว", "ั", "ส", "ด", "ี"] { h.tv.insertText(ch, replacementRange: h.tv.selectedRange()) }
+        #expect(blank().isEmpty)
+    }
+    h.tv.insertText(" and English", replacementRange: h.tv.selectedRange())
+    #expect(blank().isEmpty && h.tv.markdown() == "# หัวข้อ\n- [ ] งานสวัสดี and English\nสวัสดี")
+}
