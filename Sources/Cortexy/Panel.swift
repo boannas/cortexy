@@ -764,6 +764,7 @@ struct CustomShortcut: Codable, Identifiable, Equatable {
     var keys = ""            // HotKeySpec.encoded; "" until recorded
     var action = Action.template
     var target: UUID?        // the template's or the note's id (its title can change)
+    var folder: UUID?        // where a template's note goes; nil = home
     var anywhere = false
 
     var spec: HotKeySpec? { HotKeySpec(encoded: keys) }

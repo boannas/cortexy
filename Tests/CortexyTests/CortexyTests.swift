@@ -1899,8 +1899,8 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(blank().isEmpty && h.tv.markdown() == "# หัวข้อ\n- [ ] งานสวัสดี and English\nสวัสดี")
 }
 
-/// Shortcuts the user makes: a template's note in the open folder, or a note opened; keys that can't work are
-/// refused with a reason, and Cortexy's own ⌘ keys it takes over are named.
+/// Shortcuts the user makes: a template's note in its chosen folder (home when none, or when it's gone), or a
+/// note opened; keys that can't work are refused with a reason, and Cortexy's own ⌘ keys it takes over are named.
 @MainActor @Test func customShortcuts() {
     Prefs.register()
     let s = Store(directory: tempDir())
@@ -1912,7 +1912,14 @@ private func pngFile(in dir: URL) throws -> String {
     let cmdI = HotKeySpec(keyCode: UInt32(kVK_ANSI_I), modifiers: UInt32(cmdKey), display: "⌘I")
     var t = CustomShortcut(keys: cmdI.encoded, action: .template, target: meeting)
     #expect(nav.run(t))
-    #expect(s.folder(work)!.notes.contains { $0.text.hasPrefix("# Meeting ") })        // made in the open folder
+    #expect(s.folder(Folder.rootID)!.notes.contains { $0.text.hasPrefix("# Meeting ") }) // no folder chosen: home
+    #expect(!s.folder(work)!.notes.contains { $0.text.hasPrefix("# Meeting ") })
+    t.folder = work
+    #expect(nav.run(t) && s.folder(work)!.notes.contains { $0.text.hasPrefix("# Meeting ") }) // its folder
+    t.folder = UUID()                                                                   // since deleted: home
+    let home = s.folder(Folder.rootID)!.notes.count
+    #expect(nav.run(t) && s.folder(Folder.rootID)!.notes.count == home + 1)
+    t.folder = nil
     #expect(t.replaces == "Replaces Italic (⌘I) in Cortexy.")
     #expect(nav.run(CustomShortcut(keys: cmdI.encoded, action: .note, target: plan)) && nav.route == .note(work, plan))
     #expect(!nav.run(CustomShortcut(keys: cmdI.encoded, action: .note, target: UUID())))  // gone: nothing done

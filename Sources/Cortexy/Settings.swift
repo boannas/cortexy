@@ -657,6 +657,18 @@ struct CustomShortcutsSection: View {
                             .accessibilityLabel("Remove shortcut")
                     }
                     HStack(spacing: 10) {
+                        if s.action == .template {
+                            Text("into").foregroundStyle(.secondary)
+                            Picker("Into", selection: $s.folder) {
+                                Text("Home").tag(UUID?.none)
+                                ForEach(folders(nav), id: \.id) { f in Text(nav?.store.path(f.id) ?? f.name).tag(UUID?.some(f.id)) }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            if let id = s.folder, !folders(nav).contains(where: { $0.id == id }) {
+                                Text("Its folder is gone: notes go home").font(.caption).foregroundStyle(.red)
+                            }
+                        }
                         Toggle("From any app", isOn: $s.anywhere)
                             .toggleStyle(.checkbox)
                             .onChange(of: s.anywhere) {
@@ -667,6 +679,7 @@ struct CustomShortcutsSection: View {
                         if s.target != nil, !targets(s.action, nav).contains(where: { $0.id == s.target }) {
                             Text("Its \(s.action == .template ? "template" : "note") is gone").font(.caption).foregroundStyle(.red)
                         }
+                        Spacer(minLength: 0)
                     }
                     .font(.caption)
                 }
@@ -680,6 +693,13 @@ struct CustomShortcutsSection: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .onChange(of: shortcuts) { CustomShortcut.all = shortcuts; PanelController.shared?.registerHotKeys() }
+    }
+
+    /// Where a template's notes can go: folders that hold notes (not smart ones, not Templates itself).
+    private func folders(_ nav: Nav?) -> [Folder] {
+        guard let nav else { return [] }
+        return nav.store.moveTargets.filter { $0.id != Folder.rootID && $0.id != nav.templatesFolder?.id }
+            .sorted { nav.store.path($0.id).localizedStandardCompare(nav.store.path($1.id)) == .orderedAscending }
     }
 
     /// Templates for the template action; every live note for the other.

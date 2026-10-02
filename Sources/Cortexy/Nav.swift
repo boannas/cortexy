@@ -792,15 +792,19 @@ import UniformTypeIdentifiers
             return false
         }
         switch s.action {
-        case .template: newNote(from: n)
+        case .template:
+            // Into its folder, or home when it has none (one since deleted: home too, and said).
+            let gone = s.folder.map { id in !store.moveTargets.contains { $0.id == id } } ?? false
+            if gone { flash("That shortcut's folder is gone: the note is at home") }
+            newNote(from: n, in: gone ? Folder.rootID : s.folder ?? Folder.rootID)
         case .note: activate(f.id, n)
         }
         return true
     }
 
-    /// A new note in the open folder (not the Templates folder itself) made from `template`.
-    func newNote(from template: Note) {
-        var fid = targetFolder(named: nil)
+    /// A new note made from `template`: in `folder`, else in the open one (not the Templates folder itself).
+    func newNote(from template: Note, in folder: UUID? = nil) {
+        var fid = folder ?? targetFolder(named: nil)
         if fid == templatesFolder?.id { fid = Folder.rootID }
         let (text, caret) = Nav.expand(template.text, folder: store.folder(fid)?.name ?? "")
         guard !refuseLockedAway(fid), let id = store.addNote(to: fid, text: text) else { return }
