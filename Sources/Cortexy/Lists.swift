@@ -596,6 +596,7 @@ struct FolderRow: View {
 /// Every open task with a date, by when it's due. Tick them off here; click one to go to it.
 struct UpcomingView: View {
     @Bindable var nav: Nav
+    @Local private var pointed: UUID? // the note of the task under the pointer: its other tasks light up too
 
     var body: some View {
         let tasks = nav.dueTasks.filter { !$0.done }
@@ -641,9 +642,15 @@ struct UpcomingView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: FolderRow.radius, style: .continuous).fill(.primary.opacity(0.04)))
+        // Tasks from the note being pointed at are marked together (as in the preview), so you see which come from one note.
+        .background(RoundedRectangle(cornerRadius: FolderRow.radius, style: .continuous)
+            .fill(pointed == t.nid ? Color.cortexyAccent.opacity(0.18) : .primary.opacity(0.04)))
+        .animation(Motion.quick, value: pointed == t.nid)
         .contentShape(Rectangle())
         .onTapGesture { nav.openNote(t.nid, line: t.line) }
+        .onHover { inside in
+            if inside { pointed = t.nid } else if pointed == t.nid { pointed = nil }
+        }
         .previewOnHover(.note(t.nid))
     }
 }

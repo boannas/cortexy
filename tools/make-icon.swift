@@ -1,6 +1,13 @@
-// Draws the app icon and writes Resources/AppIcon.icns.
+// Builds the app icon from the artwork: Resources/AppIcon-art.png (the icon's square with its rim, edge to
+// edge, no background around it; any size, though 1024 px or more looks best) → Resources/AppIcon.icns and
+// Resources/AppIcon.png, on the macOS icon grid (an 824 pt body on a 1024 canvas, rounded corners, a shadow).
 //   swiftc tools/make-icon.swift -o /tmp/make-icon && /tmp/make-icon
 import AppKit
+
+let root = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : FileManager.default.currentDirectoryPath)
+guard let art = NSImage(contentsOf: root.appendingPathComponent("Resources/AppIcon-art.png")) else {
+    fatalError("Resources/AppIcon-art.png is missing")
+}
 
 func render(_ px: Int) -> Data {
     let s = CGFloat(px)
@@ -8,14 +15,14 @@ func render(_ px: Int) -> Data {
                                hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    let u = s / 1024 // design on a 1024 grid
-
-    // macOS icon body: 824 pt rounded square centered on the 1024 canvas
+    NSGraphicsContext.current?.imageInterpolation = .high
+    let u = s / 1024
     let body = NSRect(x: 100 * u, y: 100 * u, width: 824 * u, height: 824 * u)
-    let squircle = NSBezierPath(roundedRect: body, xRadius: 185 * u, yRadius: 185 * u)
+    // The artwork's own corners are this round (measured on its rim); a hair inside, so none of what was around it shows.
+    let squircle = NSBezierPath(roundedRect: body.insetBy(dx: 2 * u, dy: 2 * u), xRadius: 178 * u, yRadius: 178 * u)
     NSGraphicsContext.saveGraphicsState()
     let shadow = NSShadow()
-    shadow.shadowColor = NSColor.black.withAlphaComponent(0.25)
+    shadow.shadowColor = NSColor.black.withAlphaComponent(0.3)
     shadow.shadowBlurRadius = 20 * u
     shadow.shadowOffset = NSSize(width: 0, height: -10 * u)
     shadow.set()
@@ -23,48 +30,11 @@ func render(_ px: Int) -> Data {
     squircle.fill()
     NSGraphicsContext.restoreGraphicsState()
     squircle.addClip()
-    NSGradient(colors: [NSColor(srgbRed: 0.40, green: 0.47, blue: 1.0, alpha: 1), NSColor(srgbRed: 0.20, green: 0.24, blue: 0.80, alpha: 1)])!
-        .draw(in: body, angle: -90)
-
-    // faint "desktop window" on the left
-    NSColor.white.withAlphaComponent(0.16).setFill()
-    NSBezierPath(roundedRect: NSRect(x: 190 * u, y: 300 * u, width: 330 * u, height: 420 * u), xRadius: 36 * u, yRadius: 36 * u).fill()
-
-    // the side panel: frosted card on the right edge with a checklist
-    let panel = NSRect(x: 560 * u, y: 190 * u, width: 280 * u, height: 644 * u)
-    NSColor.white.withAlphaComponent(0.94).setFill()
-    NSBezierPath(roundedRect: panel, xRadius: 56 * u, yRadius: 56 * u).fill()
-    let accent = NSColor(srgbRed: 0.29, green: 0.35, blue: 0.95, alpha: 1)
-    for (i, done) in [true, true, false, false].enumerated() {
-        let y = (700 - CGFloat(i) * 120) * u
-        let box = NSRect(x: 605 * u, y: y, width: 56 * u, height: 56 * u)
-        let boxPath = NSBezierPath(roundedRect: box, xRadius: 14 * u, yRadius: 14 * u)
-        if done {
-            accent.setFill()
-            boxPath.fill()
-            let check = NSBezierPath()
-            check.move(to: NSPoint(x: box.minX + 14 * u, y: box.midY))
-            check.line(to: NSPoint(x: box.minX + 25 * u, y: box.minY + 16 * u))
-            check.line(to: NSPoint(x: box.maxX - 12 * u, y: box.maxY - 14 * u))
-            check.lineWidth = 8 * u
-            check.lineCapStyle = .round
-            check.lineJoinStyle = .round
-            NSColor.white.setStroke()
-            check.stroke()
-        } else {
-            boxPath.lineWidth = 7 * u
-            accent.withAlphaComponent(0.55).setStroke()
-            boxPath.stroke()
-        }
-        NSColor(white: 0.25, alpha: done ? 0.28 : 0.55).setFill()
-        NSBezierPath(roundedRect: NSRect(x: 685 * u, y: y + 18 * u, width: (done ? 110 : 130) * u, height: 20 * u),
-                     xRadius: 10 * u, yRadius: 10 * u).fill()
-    }
+    art.draw(in: body, from: .zero, operation: .copy, fraction: 1)
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
 }
 
-let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
 let iconset = FileManager.default.temporaryDirectory.appendingPathComponent("AppIcon.iconset")
 try? FileManager.default.removeItem(at: iconset)
 try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)

@@ -214,6 +214,23 @@ final class PanelController: NSObject {
             self?.nav.openToday()
             self?.show(byHover: false)
         }
+        // Shortcuts made in Settings that work from any app (ids from 100); ones taken away are let go.
+        let anywhere = CustomShortcut.all.filter { $0.anywhere && $0.spec != nil }
+        for (i, s) in anywhere.enumerated() {
+            HotKeys.shared.set(UInt32(100 + i), s.spec) { [weak self] in
+                self?.show(byHover: false)
+                self?.nav.run(s)
+            }
+        }
+        for i in anywhere.count..<max(anywhere.count, customRegistered) { HotKeys.shared.set(UInt32(100 + i), nil) {} }
+        customRegistered = anywhere.count
+    }
+    private var customRegistered = 0
+
+    /// A shortcut made in Settings that works in Cortexy, for this key press.
+    static func custom(for e: NSEvent) -> CustomShortcut? {
+        guard let spec = HotKeySpec(event: e) else { return nil }
+        return CustomShortcut.all.first { !$0.anywhere && $0.matches(spec) }
     }
 
     // MARK: Show / hide
@@ -538,6 +555,11 @@ final class PanelController: NSObject {
 
     /// Cut/copy/paste/undo for our other windows: an accessory app has no Edit menu to route them.
     static func handleEditKey(_ e: NSEvent, in w: NSWindow) -> Bool {
+        if let s = custom(for: e), let c = shared { // a note window: the user's own act in the panel
+            c.show(byHover: false)
+            c.nav.run(s)
+            return true
+        }
         let mods = e.modifierFlags.intersection([.command, .shift, .option, .control])
         guard mods == .command || mods == [.command, .shift], let key = key(e) else { return false }
         let shift = mods.contains(.shift)
@@ -598,6 +620,7 @@ final class PanelController: NSObject {
         let mods = e.modifierFlags.intersection([.command, .shift, .option, .control])
         let responder = panel.firstResponder as? NSTextView
         if responder?.hasMarkedText() == true { return false } // an input method is composing (CJK etc.)
+        if let s = Self.custom(for: e) { nav.run(s); return true } // the user's own come first
         let inText = responder != nil
         // The search box is the only field editor outside the note editor (bar the rename field).
         // (A smart folder's query bar is a field too, but not the search box: no hints, Tab and ↓ are the field's own.)
@@ -724,6 +747,59 @@ final class PanelController: NSObject {
 }
 
 // MARK: Global hot keys (Carbon: no Accessibility permission needed)
+
+/// A shortcut made in Settings → Shortcuts: keys, and the template to start a note from or the note to open.
+/// It works in Cortexy (the panel, a note window), or from any app when `anywhere` (then it has ⌃ or ⌥ in it,
+/// so it can't take another app's ⌘ shortcut).
+struct CustomShortcut: Codable, Identifiable, Equatable {
+    enum Action: String, Codable, CaseIterable, Identifiable {
+        case template, note
+        var id: Self { self }
+        var name: String { self == .template ? "New note from template" : "Open note" }
+    }
+    var id = UUID()
+    var keys = ""            // HotKeySpec.encoded; "" until recorded
+    var action = Action.template
+    var target: UUID?        // the template's or the note's id (its title can change)
+    var anywhere = false
+
+    var spec: HotKeySpec? { HotKeySpec(encoded: keys) }
+    func matches(_ s: HotKeySpec) -> Bool { spec.map { $0.keyCode == s.keyCode && $0.modifiers == s.modifiers } ?? false }
+
+    static let defaultsKey = "customShortcuts"
+    static var all: [CustomShortcut] {
+        get { UserDefaults.standard.data(forKey: defaultsKey).flatMap { try? JSONDecoder().decode([CustomShortcut].self, from: $0) } ?? [] }
+        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: defaultsKey) }
+    }
+
+    /// In-app keys a shortcut can't take (they'd stop copying, pasting, undoing, quitting…).
+    static let reserved: [UInt32: String] = [UInt32(kVK_ANSI_C): "Copy", UInt32(kVK_ANSI_V): "Paste", UInt32(kVK_ANSI_X): "Cut",
+                                             UInt32(kVK_ANSI_Z): "Undo", UInt32(kVK_ANSI_A): "Select All", UInt32(kVK_ANSI_Q): "Quit",
+                                             UInt32(kVK_ANSI_W): "Close"]
+    /// Cortexy's own ⌘ keys a shortcut takes over (allowed, but said).
+    static let builtIn: [UInt32: String] = [UInt32(kVK_ANSI_B): "Bold", UInt32(kVK_ANSI_I): "Italic", UInt32(kVK_ANSI_E): "Code",
+                                            UInt32(kVK_ANSI_K): "Link", UInt32(kVK_ANSI_L): "Checklist", UInt32(kVK_ANSI_N): "New Note",
+                                            UInt32(kVK_ANSI_D): "Today's Note", UInt32(kVK_ANSI_F): "Find", UInt32(kVK_ANSI_O): "Quick Open",
+                                            UInt32(kVK_ANSI_P): "Commands", UInt32(kVK_ANSI_G): "Graph / Find Next",
+                                            UInt32(kVK_ANSI_LeftBracket): "Back", UInt32(kVK_ANSI_Comma): "Settings"]
+
+    /// Why `s` can't be this shortcut's keys (nil: it can).
+    static func problem(_ s: HotKeySpec, anywhere: Bool, others: [HotKeySpec]) -> String? {
+        if others.contains(where: { $0.keyCode == s.keyCode && $0.modifiers == s.modifiers }) { return "Another Cortexy shortcut already uses \(s.display)." }
+        if anywhere {
+            if s.modifiers & UInt32(controlKey | optionKey) == 0 { return "From any app it needs ⌃ or ⌥ too, so it doesn't take another app's shortcut." }
+            return HotKeys.problem(s, others: []) ?? (HotKeys.shared.available(s) ? nil : "\(s.display) is taken by macOS or another app.")
+        }
+        if s.modifiers == UInt32(cmdKey), let what = reserved[s.keyCode] { return "\(s.display) is \(what): it can't be replaced." }
+        return nil
+    }
+
+    /// What of Cortexy's own it replaces, said under it.
+    var replaces: String? {
+        guard !anywhere, let s = spec, s.modifiers == UInt32(cmdKey), let what = Self.builtIn[s.keyCode] else { return nil }
+        return "Replaces \(what) (\(s.display)) in Cortexy."
+    }
+}
 
 struct HotKeySpec: Equatable {
     var keyCode: UInt32

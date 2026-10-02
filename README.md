@@ -159,4 +159,4 @@ tell application "Cortexy" to toggle panel
 | `Settings.swift` | หน้าต่าง Settings, ตัวอัด hotkey, ย้ายโฟลเดอร์ข้อมูล |
 | `Scripting.swift` + `Resources/Cortexy.sdef` | AppleScript, Services |
 | `Snapshot.swift` | debug เท่านั้น: ไล่ทุกหน้าจอเพื่อถ่าย screenshot เทสต์ |
-| `tools/make-icon.swift` | วาดไอคอนแอป → `Resources/AppIcon.icns` |
+| `tools/make-icon.swift` | สร้างไอคอนแอปจาก `Resources/AppIcon-art.png` → `Resources/AppIcon.icns` |

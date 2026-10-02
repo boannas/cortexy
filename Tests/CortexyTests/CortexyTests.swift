@@ -1887,3 +1887,34 @@ private func pngFile(in dir: URL) throws -> String {
     h.tv.insertText(" and English", replacementRange: h.tv.selectedRange())
     #expect(blank().isEmpty && h.tv.markdown() == "# หัวข้อ\n- [ ] งานสวัสดี and English\nสวัสดี")
 }
+
+/// Shortcuts the user makes: a template's note in the open folder, or a note opened; keys that can't work are
+/// refused with a reason, and Cortexy's own ⌘ keys it takes over are named.
+@MainActor @Test func customShortcuts() {
+    Prefs.register()
+    let s = Store(directory: tempDir())
+    let nav = Nav(store: s)
+    let templates = s.addFolder("Templates")
+    let meeting = s.addNote(to: templates, text: "# Meeting {{date}}\n- {{cursor}}")!
+    let work = s.addFolder("Work"), plan = s.addNote(to: work, text: "# Plan")!
+    nav.route = .folder(work)
+    let cmdI = HotKeySpec(keyCode: UInt32(kVK_ANSI_I), modifiers: UInt32(cmdKey), display: "⌘I")
+    var t = CustomShortcut(keys: cmdI.encoded, action: .template, target: meeting)
+    #expect(nav.run(t))
+    #expect(s.folder(work)!.notes.contains { $0.text.hasPrefix("# Meeting ") })        // made in the open folder
+    #expect(t.replaces == "Replaces Italic (⌘I) in Cortexy.")
+    #expect(nav.run(CustomShortcut(keys: cmdI.encoded, action: .note, target: plan)) && nav.route == .note(work, plan))
+    #expect(!nav.run(CustomShortcut(keys: cmdI.encoded, action: .note, target: UUID())))  // gone: nothing done
+
+    let cmdC = HotKeySpec(keyCode: UInt32(kVK_ANSI_C), modifiers: UInt32(cmdKey), display: "⌘C")
+    #expect(CustomShortcut.problem(cmdC, anywhere: false, others: []) != nil)          // Copy stays Copy
+    #expect(CustomShortcut.problem(cmdI, anywhere: false, others: []) == nil)
+    #expect(CustomShortcut.problem(cmdI, anywhere: false, others: [cmdI]) != nil)      // taken by another
+    #expect(CustomShortcut.problem(cmdI, anywhere: true, others: []) != nil)           // any app: needs ⌃ or ⌥
+    t.anywhere = true
+    #expect(t.replaces == nil)
+    let saved = CustomShortcut.all
+    defer { CustomShortcut.all = saved }
+    CustomShortcut.all = [t]
+    #expect(CustomShortcut.all == [t])
+}

@@ -281,15 +281,24 @@ struct LookEditor: View {
         Section {
             Toggle("Use the theme's font", isOn: bind(\.useThemeFont))
             Picker("Font", selection: bind(\.font)) {
-                ForEach(Theme.Design.allCases) { Text($0.name).tag($0.rawValue) }
-                Divider()
-                ForEach(Fonts.families, id: \.self) { Text(Fonts.thai.contains($0) ? $0 : "\($0)  (no Thai)").tag($0) }
+                // Grouped by what they can write: a font missing Thai or English says so in its name too.
+                Section("System (Thai in Thonburi)") {
+                    ForEach(Theme.Design.allCases) { Text($0.name).tag($0.rawValue) }
+                }
+                Section("Thai and English") {
+                    ForEach(Fonts.families.filter { Fonts.thai.contains($0) && Fonts.latin.contains($0) }, id: \.self) { Text($0).tag($0) }
+                }
+                Section("⚠︎ No Thai — Thai shows in Thonburi") {
+                    ForEach(Fonts.families.filter { !Fonts.thai.contains($0) && Fonts.latin.contains($0) }, id: \.self) { Text("\($0) — no Thai").tag($0) }
+                }
+                Section("⚠︎ No English letters") {
+                    ForEach(Fonts.families.filter { !Fonts.latin.contains($0) }, id: \.self) {
+                        Text("\($0) — \(Fonts.thai.contains($0) ? "no English" : "no Thai or English")").tag($0)
+                    }
+                }
             }
             .disabled(look.useThemeFont)
-            if !look.useThemeFont, Fonts.families.contains(look.font), !Fonts.thai.contains(look.font) {
-                Text("\(look.font) has no Thai letters, so Thai text shows in the system's Thai font and may look heavier.")
-                    .font(.caption).foregroundStyle(.orange)
-            }
+            FontCoverage(style: Themes.shared.textStyle)
             Stepper("Size: \(Int(look.fontSize)) pt", value: bind(\.fontSize), in: 10...28)
             slider("Line spacing", \.lineSpacing, 0...12) { "\(Int($0)) pt" }
             slider("Paragraph spacing", \.paragraphSpacing, 0...20) { "\(Int($0)) pt" }
@@ -337,8 +346,56 @@ enum Fonts {
     static let thai = Set(families.filter { f in
         NSFontManager.shared.font(withFamily: f, traits: [], weight: 5, size: 12)?.coveredCharacterSet.contains(Unicode.Scalar(0x0E01)!) == true
     })
+    /// Families that have English (Latin) letters: some are for one other script, or symbols, only.
+    static let latin = Set(families.filter { f in
+        let set = NSFontManager.shared.font(withFamily: f, traits: [], weight: 5, size: 12)?.coveredCharacterSet
+        return set?.contains(Unicode.Scalar(0x41)!) == true && set?.contains(Unicode.Scalar(0x61)!) == true
+    })
+
+    /// What `font` itself has, and the fonts the system writes Thai and English in where it has none.
+    static func coverage(_ font: NSFont) -> (thai: Bool, english: Bool, thaiStandIn: String, englishStandIn: String) {
+        let set = font.coveredCharacterSet
+        func standIn(_ s: String) -> String {
+            let f = CTFontCreateForString(font as CTFont, s as CFString, CFRange(location: 0, length: 1))
+            return (CTFontCopyFamilyName(f) as String).trimmingCharacters(in: CharacterSet(charactersIn: ".")).replacingOccurrences(of: "UI", with: "")
+        }
+        return (set.contains(Unicode.Scalar(0x0E01)!), set.contains(Unicode.Scalar(0x41)!) && set.contains(Unicode.Scalar(0x61)!),
+                standIn("ก"), standIn("A"))
+    }
+
     static let monospaced = Set((NSFontManager.shared.availableFontNames(with: .fixedPitchFontMask) ?? [])
         .compactMap { NSFont(name: $0, size: 12)?.familyName }).filter { !$0.hasPrefix(".") }.sorted()
+}
+
+/// Under the font picker: a line of English and Thai in the font as notes will show it, and in plain words
+/// whether the font has each (a theme's or a chosen font with no Thai is marked, not left to be noticed).
+struct FontCoverage: View {
+    let style: TextStyle
+
+    var body: some View {
+        let font = style.body, has = Fonts.coverage(font), name = font.familyName ?? font.fontName
+        let system = style.family == nil // a system design: Thai in the system's Thai font is how macOS writes it
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Aa Bb 123  ·  ภาษาไทย กขค ๑๒๓").font(Font(font as CTFont)).lineLimit(1)
+            Group {
+                switch (has.thai, has.english) {
+                case (true, true):
+                    Label("\(name) has Thai and English", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                case (false, true) where system:
+                    Label("System font: Thai is written in \(has.thaiStandIn)", systemImage: "info.circle").foregroundStyle(.secondary)
+                case (false, true):
+                    Label("\(name) has no Thai: Thai shows in \(has.thaiStandIn), and may look heavier or out of place",
+                          systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                case (true, false):
+                    Label("\(name) has no English letters: English shows in \(has.englishStandIn)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                case (false, false):
+                    Label("\(name) has neither Thai nor English letters: English shows in \(has.englishStandIn), Thai in \(has.thaiStandIn). Pick another font.",
+                          systemImage: "xmark.octagon.fill").foregroundStyle(.red)
+                }
+            }
+            .font(.caption.weight(.medium))
+        }
+    }
 }
 
 struct ThemeTile: View {
@@ -356,7 +413,7 @@ struct ThemeTile: View {
                     .fill(Color(nsColor: .textBackgroundColor).opacity(0.85))
                     .overlay { RoundedRectangle(cornerRadius: 5, style: .continuous).fill(theme.cardTint.flatMap(Color.init(hex:))?.opacity(0.2) ?? .clear) }
                     .overlay(alignment: .topLeading) {
-                        Text("Aa").font(.system(size: 9, weight: .semibold, design: theme.design.swiftUI)).padding(3)
+                        Text("Aa ก").font(.system(size: 9, weight: .semibold, design: theme.design.swiftUI)).padding(3)
                     }
                     .padding(8)
                 Circle().fill(theme.accentColor ?? .accentColor).frame(width: 8, height: 8).padding(4)
@@ -415,6 +472,8 @@ struct ThemeEditor: View {
         Picker("Suggested font", selection: bind(\.design)) {
             ForEach(Theme.Design.allCases) { Text($0.name).tag($0) }
         }
+        Text("System designs have no Thai of their own: Thai is written in Thonburi with any of them.")
+            .font(.caption).foregroundStyle(.secondary)
     }
 }
 
@@ -433,6 +492,7 @@ struct ShortcutSettings: View {
                 Text("Work from any app. Click a shortcut, then press the new keys (Esc cancels).")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            CustomShortcutsSection()
             Section("In the panel") {
                 ForEach(Self.panelKeys, id: \.0) { name, keys in LabeledContent(name, value: keys) }
             }
@@ -451,10 +511,6 @@ struct ShortcutSettings: View {
 
 struct HotKeyRecorder: View {
     @AppStorage private var stored: String
-    @Local private var recording = false
-    @Local private var monitor: Any?
-    @Local private var closeObserver: Any?
-    @Local private var problem: String?
     private let key: String
 
     init(key: String) {
@@ -462,28 +518,45 @@ struct HotKeyRecorder: View {
         _stored = AppStorage(wrappedValue: "", key)
     }
 
-    private var fallback: String { Prefs.defaults[key] as? String ?? "" }
-    /// The app's other global shortcuts, which this one mustn't repeat.
+    /// The app's other global shortcuts (its own and the user's), which this one mustn't repeat.
     private var others: [HotKeySpec] {
         [Prefs.toggleKey, Prefs.newNoteKey, Prefs.todayKey].filter { $0 != key }.compactMap { HotKeySpec(encoded: UserDefaults.standard.string(forKey: $0) ?? "") }
+            + CustomShortcut.all.compactMap(\.spec)
     }
+
+    var body: some View {
+        KeyRecorder(keys: $stored, fallback: Prefs.defaults[key] as? String ?? "") { spec in
+            HotKeys.problem(spec, others: others) ?? (HotKeys.shared.available(spec) ? nil : "\(spec.display) is taken by macOS or another app.")
+        }
+    }
+}
+
+/// Click, then press the keys (Esc cancels): kept only if `check` finds nothing wrong, else it says why.
+struct KeyRecorder: View {
+    @Binding var keys: String
+    var fallback = ""
+    let check: (HotKeySpec) -> String?
+    @Local private var recording = false
+    @Local private var monitor: Any?
+    @Local private var closeObserver: Any?
+    @Local private var problem: String?
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
             HStack(spacing: 6) {
                 Button { recording ? stop() : start() } label: {
-                    Text(recording ? "Type shortcut…" : HotKeySpec(encoded: stored)?.display ?? "Record Shortcut")
+                    Text(recording ? "Type shortcut…" : HotKeySpec(encoded: keys)?.display ?? "Record Shortcut")
                         .frame(minWidth: 120)
                 }
-                if !stored.isEmpty && !recording {
-                    Button { stored = ""; problem = nil } label: { Image(systemName: "xmark.circle.fill") }
+                if !keys.isEmpty && !recording {
+                    Button { keys = ""; problem = nil } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                         .help("Clear")
                         .accessibilityLabel("Clear shortcut")
                 }
-                if !fallback.isEmpty && stored != fallback && !recording {
-                    Button { stored = fallback; problem = nil } label: { Image(systemName: "arrow.counterclockwise") }
+                if !fallback.isEmpty && keys != fallback && !recording {
+                    Button { keys = fallback; problem = nil } label: { Image(systemName: "arrow.counterclockwise") }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
                         .help("Back to \(HotKeySpec(encoded: fallback)?.display ?? "the default")")
@@ -504,8 +577,8 @@ struct HotKeyRecorder: View {
             if e.keyCode == UInt16(kVK_Escape) { stop(); return nil }
             guard let spec = HotKeySpec(event: e) else { NSSound.beep(); return nil }
             // Checked before it's kept: one that can't work, or that's taken, says why instead of failing silently.
-            problem = HotKeys.problem(spec, others: others) ?? (HotKeys.shared.available(spec) ? nil : "\(spec.display) is taken by macOS or another app.")
-            if problem == nil { stored = spec.encoded } else { NSSound.beep() }
+            problem = check(spec)
+            if problem == nil { keys = spec.encoded } else { NSSound.beep() }
             stop()
             return nil
         }
@@ -520,6 +593,74 @@ struct HotKeyRecorder: View {
         closeObserver = nil
         if recording { HotKeys.shared.pause(false) }
         recording = false
+    }
+}
+
+/// Shortcuts the user makes: keys → a template to start a note from, or a note to open.
+struct CustomShortcutsSection: View {
+    @Local private var shortcuts = CustomShortcut.all
+
+    var body: some View {
+        let nav = PanelController.shared?.nav
+        Section {
+            ForEach($shortcuts) { $s in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Picker("", selection: $s.action) { ForEach(CustomShortcut.Action.allCases) { Text($0.name).tag($0) } }
+                            .labelsHidden()
+                            .fixedSize()
+                        Picker("", selection: $s.target) {
+                            Text("Choose…").tag(UUID?.none)
+                            ForEach(targets(s.action, nav), id: \.id) { n in Text(n.title).tag(UUID?.some(n.id)) }
+                        }
+                        .labelsHidden()
+                        Spacer(minLength: 8)
+                        KeyRecorder(keys: $s.keys) { spec in
+                            CustomShortcut.problem(spec, anywhere: s.anywhere, others: others(than: s.id))
+                        }
+                        Button { shortcuts.removeAll { $0.id == s.id } } label: { Image(systemName: "minus.circle.fill") }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .help("Remove this shortcut")
+                            .accessibilityLabel("Remove shortcut")
+                    }
+                    HStack(spacing: 10) {
+                        Toggle("From any app", isOn: $s.anywhere)
+                            .toggleStyle(.checkbox)
+                            .onChange(of: s.anywhere) {
+                                // Keys that can't work there are dropped (and the reason shown by the recorder next time).
+                                if let spec = s.spec, CustomShortcut.problem(spec, anywhere: s.anywhere, others: others(than: s.id)) != nil { s.keys = "" }
+                            }
+                        if let note = s.replaces { Text(note).font(.caption).foregroundStyle(.orange) }
+                        if s.target != nil, !targets(s.action, nav).contains(where: { $0.id == s.target }) {
+                            Text("Its \(s.action == .template ? "template" : "note") is gone").font(.caption).foregroundStyle(.red)
+                        }
+                    }
+                    .font(.caption)
+                }
+                .padding(.vertical, 2)
+            }
+            Button("Add Shortcut") { shortcuts.append(CustomShortcut()) }
+        } header: {
+            Text("Your shortcuts")
+        } footer: {
+            Text("Start a note from a template, or open a note, with keys of your own. They work in Cortexy; with “From any app” they work everywhere, and need ⌃ or ⌥ so they don't take another app's ⌘ keys.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .onChange(of: shortcuts) { CustomShortcut.all = shortcuts; PanelController.shared?.registerHotKeys() }
+    }
+
+    /// Templates for the template action; every live note for the other.
+    private func targets(_ a: CustomShortcut.Action, _ nav: Nav?) -> [Note] {
+        guard let nav else { return [] }
+        if a == .template { return nav.templates }
+        return nav.store.liveFolders.flatMap(\.notes).filter { !$0.archived }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    /// Every other shortcut's keys, built-in global ones included.
+    private func others(than id: UUID) -> [HotKeySpec] {
+        shortcuts.filter { $0.id != id }.compactMap(\.spec)
+            + [Prefs.toggleKey, Prefs.newNoteKey, Prefs.todayKey].compactMap { HotKeySpec(encoded: UserDefaults.standard.string(forKey: $0) ?? "") }
     }
 }
 

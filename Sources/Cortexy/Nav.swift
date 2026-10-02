@@ -784,6 +784,19 @@ import UniformTypeIdentifiers
         return ((s as NSString).replacingCharacters(in: cursor, with: ""), cursor.location)
     }
 
+    /// What a shortcut made in Settings does. False (and said) when its template or note is gone.
+    @discardableResult func run(_ s: CustomShortcut) -> Bool {
+        guard let id = s.target, let f = store.folderOf(id), let n = store.note(f.id, id), !store.inTrash(f.id) else {
+            flash(s.target == nil ? "Choose what the shortcut does in Settings → Shortcuts" : "That shortcut's \(s.action == .template ? "template" : "note") is gone")
+            return false
+        }
+        switch s.action {
+        case .template: newNote(from: n)
+        case .note: activate(f.id, n)
+        }
+        return true
+    }
+
     /// A new note in the open folder (not the Templates folder itself) made from `template`.
     func newNote(from template: Note) {
         var fid = targetFolder(named: nil)
