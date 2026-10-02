@@ -495,7 +495,7 @@ private func tempDir() -> URL {
     #expect(TextStyle(size: 10, indentScale: 3).indentWidth == 30)
 }
 
-@Test func templatesAndDailyNotes() {
+@MainActor @Test func templatesAndDailyNotes() {
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
     let s = Store(directory: dir)
@@ -648,6 +648,8 @@ private final class StubImages: URLProtocol {
 /// focused it (the caret stayed at the end, out of sight) and typing landed there. Now the first click counts,
 /// the caret is in view on opening, and each note reopens where you left it.
 @MainActor @Test func editingStartsWhereYouClickAndYouSeeIt() async throws {
+    await PanelGate.enter() // its page transitions and focus are timed: not alongside tests that show the panel
+    defer { PanelGate.leave() }
     Prefs.register()
     let dir = tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -1274,7 +1276,7 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(PanelController.key(ev("ท", kVK_ANSI_M)) == "m")
 }
 
-@Test func thaiDatesAndNumbers() {
+@MainActor @Test func thaiDatesAndNumbers() { // (sets global date settings: not alongside templatesAndDailyNotes)
     let ad = MD.due("- [ ] ส่งรายงาน 📅 2026-10-05")!.date
     #expect(MD.due("- [ ] ส่งรายงาน 📅 2569-10-05")?.date == ad)   // พ.ศ.
     #expect(MD.due("- [ ] ส่งรายงาน 📅 ๒๕๖๙-๑๐-๐๕")?.date == ad)   // Thai digits
@@ -1552,6 +1554,7 @@ private func pngFile(in dir: URL) throws -> String {
     let m = NSEvent.mouseLocation, f = c.panel.frame
     let rect = CGRect(x: m.x - f.minX - 10, y: f.height - (m.y - f.minY) - 10, width: 20, height: 20)
     let p = c.preview
+    p.pointer = { m } // resting on the row, whatever the real pointer does meanwhile
     p.hover(.folder(big), inside: true, rect: rect)
     for _ in 0..<40 where !p.isShowing { try await Task.sleep(for: .milliseconds(50)) }
     try #require(p.isShowing)
@@ -1572,4 +1575,132 @@ private func pngFile(in dir: URL) throws -> String {
     if let beside = p.peekRect {
         #expect(p.model.peek == note && p.model.card == card && !beside.intersects(p.cardRect) && beside.size == p.cardRect.size)
     }
+}
+
+/// Resting the pointer on a row always brings its preview, however the events came: during or just after a
+/// scroll, a row's exit arriving after the next row's entry, or the scrolling stopping with the pointer on a
+/// row. (Each of these used to drop the hover for good: no preview until the pointer left the row and returned.)
+@MainActor @Test func previewAlwaysFollowsThePointer() async throws {
+    await PanelGate.enter()
+    defer { PanelGate.leave() }
+    Prefs.register()
+    let s = Store(directory: tempDir())
+    let a = s.addFolder("A"), b = s.addFolder("B")
+    _ = s.addNote(to: a, text: "# in A")
+    _ = s.addNote(to: b, text: "# in B")
+    let c = PanelController(store: s)
+    c.holdOpen += 1
+    c.show(byHover: true)
+    defer { c.hide() }
+    try await Task.sleep(for: .milliseconds(600))
+    let m = NSEvent.mouseLocation, f = c.panel.frame
+    let rect = CGRect(x: m.x - f.minX - 10, y: f.height - (m.y - f.minY) - 10, width: 20, height: 20)
+    let p = c.preview
+    p.pointer = { m } // resting on the row, whatever the real pointer does meanwhile
+    func shows(_ column: PreviewModel.Column, within seconds: Double = 2.5) async throws -> Bool {
+        for _ in 0..<Int(seconds * 20) where !(p.isShowing && p.model.columns.first == column) { try await Task.sleep(for: .milliseconds(50)) }
+        return p.isShowing && p.model.columns.first == column
+    }
+
+    // The pointer lands on a row just as the list stopped scrolling: it shows once things are quiet.
+    p.scrolled()
+    p.hover(.folder(a), inside: true, rect: rect)
+    #expect(try await shows(.folder(a)))
+
+    // Moving to the next row, the old row's exit comes after the new row's entry.
+    p.hover(.folder(b), inside: true, rect: rect)
+    p.hover(.folder(a), inside: false, rect: rect)
+    #expect(try await shows(.folder(b)))
+
+    // Scrolling closes it; the pointer is still on the row when that stops, with no new event to say so.
+    p.scrolled()
+    #expect(!p.isShowing)
+    #expect(try await shows(.folder(b)))
+
+    // Off the row, nothing opens.
+    p.hover(.folder(b), inside: false, rect: rect)
+    p.hide()
+    try await Task.sleep(for: .milliseconds(900))
+    #expect(!p.isShowing)
+}
+
+/// Moving fast from one row to another that is far from it: the old preview goes, and the new row's own preview
+/// still comes (the old one closing used to cancel it, leaving a highlighted row with no preview).
+@MainActor @Test func previewComesForARowFarFromTheLastOne() async throws {
+    await PanelGate.enter()
+    defer { PanelGate.leave() }
+    Prefs.register()
+    let s = Store(directory: tempDir())
+    let a = s.addFolder("A"), b = s.addFolder("B")
+    _ = s.addNote(to: a, text: "# in A")
+    _ = s.addNote(to: b, text: "# in B")
+    let c = PanelController(store: s)
+    c.holdOpen += 1
+    c.show(byHover: true)
+    defer { c.hide() }
+    try await Task.sleep(for: .milliseconds(600))
+    let f = c.panel.frame, p = c.preview
+    // Two rows in the panel's top-left coordinates, the second well above the first (and above A's card).
+    let rowA = CGRect(x: 40, y: 420, width: 280, height: 40), rowB = CGRect(x: 40, y: 60, width: 280, height: 40)
+    func center(_ r: CGRect) -> NSPoint { NSPoint(x: f.minX + r.midX, y: f.maxY - r.midY) }
+    func shows(_ column: PreviewModel.Column) async throws -> Bool {
+        for _ in 0..<60 where !(p.isShowing && p.model.columns.first == column) { try await Task.sleep(for: .milliseconds(50)) }
+        return p.isShowing && p.model.columns.first == column
+    }
+    p.pointer = { center(rowA) }
+    p.hover(.folder(a), inside: true, rect: rowA)
+    #expect(try await shows(.folder(a)))
+    p.pointer = { center(rowB) }                       // a quick move up to a row far from the card
+    p.hover(.folder(a), inside: false, rect: rowA)
+    p.hover(.folder(b), inside: true, rect: rowB)
+    #expect(try await shows(.folder(b)))
+}
+
+/// An editor wired as the real one is: every change and every caret move restyles.
+@MainActor private final class RestylingHarness: NSObject, NSTextViewDelegate {
+    let tv = MarkdownTextView(usingTextLayoutManager: false)
+    let undo = UndoManager()
+    override init() {
+        super.init()
+        tv.frame = NSRect(x: 0, y: 0, width: 320, height: 200)
+        tv.textContainer?.widthTracksTextView = true
+        tv.isRichText = false
+        tv.allowsUndo = true
+        tv.delegate = self
+    }
+    func undoManager(for view: NSTextView) -> UndoManager? { undo }
+    func textDidChange(_ n: Notification) { tv.convertTypedAttachments(); tv.restyle() }
+    func textViewDidChangeSelection(_ n: Notification) { tv.restyle() }
+}
+
+/// The glyphs the editor's layout manager holds match those of a fresh layout of the same text.
+@MainActor private func glyphsAreCurrent(_ tv: MarkdownTextView) -> Bool {
+    guard let lm = tv.layoutManager, let tc = tv.textContainer, let storage = tv.textStorage else { return false }
+    lm.ensureLayout(for: tc)
+    let fresh = NSTextStorage(attributedString: storage)
+    let freshLM = NSLayoutManager(), freshTC = NSTextContainer(size: tc.size)
+    freshTC.lineFragmentPadding = tc.lineFragmentPadding
+    freshLM.addTextContainer(freshTC)
+    fresh.addLayoutManager(freshLM)
+    freshLM.ensureLayout(for: freshTC)
+    guard lm.numberOfGlyphs == freshLM.numberOfGlyphs else { return false }
+    return (0..<lm.numberOfGlyphs).allSatisfy { lm.cgGlyph(at: $0) == freshLM.cgGlyph(at: $0) }
+}
+
+/// A table typed out and left with Return (a new row, then Return on the empty one) was drawn as rubbish: the
+/// caret moving out of it restyled the table (monospaced source → aligned) while TextKit was still handling the
+/// edit, and TextKit kept the glyphs of the old fonts. Clicking elsewhere was fine, which is why it was random.
+@MainActor @Test func tableLeftWithReturnKeepsItsGlyphs() async throws {
+    Prefs.register()
+    let h = RestylingHarness()
+    h.tv.load("")
+    for ch in "| ACB | AAA |\n| --- | --- |\n|sasd | dasd|" {
+        if ch == "\n" { h.tv.insertNewline(nil) } else { h.tv.insertText(String(ch), replacementRange: h.tv.selectedRange()) }
+    }
+    #expect(h.tv.continueList())                                                         // Return: a new row
+    h.tv.setSelectedRange(NSRange(location: (h.tv.string as NSString).length, length: 0))
+    #expect(h.tv.continueList())                                                         // Return on the empty row: out
+    try await Task.sleep(for: .milliseconds(100))                                        // the restyle after the edit
+    #expect(h.tv.markdown() == "| ACB | AAA |\n| --- | --- |\n|sasd | dasd|\n")
+    #expect(glyphsAreCurrent(h.tv))
 }

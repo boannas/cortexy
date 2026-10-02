@@ -44,7 +44,7 @@ import UniformTypeIdentifiers
             dragging = nil    // a drag the panel closed under never ended
             dropTarget = nil
             rowFrames = [:]
-            PanelController.shared?.preview.hide()
+            if let c = PanelController.shared, c.nav === self { c.preview.hide() } // (this panel's, not whichever was made last)
             UserDefaults.standard.set(route.encoded, forKey: "lastRoute")
         }
     }

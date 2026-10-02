@@ -124,6 +124,12 @@ enum Styler {
         for b in blocks where NSIntersectionRange(b.whole, out).length > 0 || NSLocationInRange(out.location, b.whole) {
             out = NSUnionRange(out, b.whole)
         }
+        return withTableRows(ns, out)
+    }
+
+    /// `r` and the table rows touching it, above and below.
+    static func withTableRows(_ ns: NSString, _ r: NSRange) -> NSRange {
+        var out = r
         func row(_ p: NSRange) -> Bool { MD.isTableRow(ns.substring(with: p)) }
         while out.location > 0 {
             let prev = ns.paragraphRange(for: NSRange(location: out.location - 1, length: 0))
@@ -682,18 +688,45 @@ final class MarkdownTextView: NSTextView {
 
     /// Restyles only what changed: edited paragraphs, plus the ones the caret left and entered (markup shows
     /// only where the caret is). Adding or removing a ``` line changes everything after it, so that restyles all.
+    private var restyleQueued = false, restyleAfterEdit = false
+
     func restyle(force: Bool = false) {
         guard let storage = textStorage, !hasMarkedText() else { return } // don't disturb IME composition
         let ns = string as NSString
         let active = previewing ? NSRange(location: NSNotFound, length: 0)
             : ns.paragraphRange(for: NSRange(location: min(selectedRange().location, ns.length), length: 0))
         let fences = Styler.fences(string, before: ns.length)
+        // Asked from inside the layout manager's handling of an edit (the caret moved because of it), restyling
+        // beyond the paragraphs being edited — a whole table going from source to aligned, say — leaves it drawing
+        // the glyphs of the old fonts (a table left with Return came out as rubbish). That waits for the edit to
+        // be through; the paragraph being typed in is styled at once, which is cheaper there (before it's laid out).
+        let editing = storage.editedMask != []
+        func afterTheEdit(_ force: Bool) {
+            restyleAfterEdit = restyleAfterEdit || force
+            guard !restyleQueued else { return }
+            restyleQueued = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                restyleQueued = false
+                let forced = restyleAfterEdit
+                restyleAfterEdit = false
+                restyle(force: forced)
+            }
+        }
         if force || fences != fenceCount {
+            if editing { return afterTheEdit(force) }
             Styler.style(storage, active: active, style)
         } else {
             let parts = (dirty.map { [$0] } ?? []) + (active != lastActive ? [active, lastActive] : [])
             guard !parts.isEmpty else { return }
-            for r in Set(parts.map { Styler.paragraphs(ns, $0) }) { Styler.style(storage, active: active, style, in: r) }
+            let ranges = Set(parts.map { Styler.paragraphs(ns, $0) })
+            if editing {
+                // What would really be restyled (a table goes whole) against the paragraphs being edited.
+                let at = min(storage.editedRange.location, ns.length)
+                let near = NSUnionRange(Styler.paragraphs(ns, NSRange(location: at, length: min(storage.editedRange.length, ns.length - at))), active)
+                if ranges.contains(where: { NSUnionRange(near, Styler.withTableRows(ns, $0)) != near }) { return afterTheEdit(false) }
+            }
+            for r in ranges { Styler.style(storage, active: active, style, in: r) }
         }
         dirty = nil
         lastActive = active

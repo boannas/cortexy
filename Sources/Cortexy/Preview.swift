@@ -62,9 +62,12 @@ final class PreviewController: NSObject {
     /// The list is being scrolled or swiped: no preview while it is, and one showing goes.
     func scrolled() {
         quietUntil = Date().addingTimeInterval(0.7)
-        pending?.cancel()
         peekPending?.cancel()
+        let was = hovered
         if isShowing { hide() }
+        pending?.cancel()
+        // The pointer may rest on a row when the scrolling stops, with no new hover event to say so.
+        if let was { hovered = was; arm(was.column, after: 0.15) }
     }
 
     /// Only the card takes clicks; the rest of the strip beside the panel lets them through to what's under it.
@@ -88,26 +91,63 @@ final class PreviewController: NSObject {
     // MARK: From the panel
 
     /// A note card or folder row was hovered (`rect`: it in the panel's top-left coordinates).
+    /// Where the pointer rests is remembered, and the preview is tried for it until it shows or the pointer
+    /// leaves (see `attempt`). Hover events used to be acted on once and dropped: one that came while the list
+    /// had just been scrolled, or a row's exit arriving after the next row's entry, left a row with no preview
+    /// until the pointer went off it and back.
     func hover(_ column: PreviewModel.Column, inside: Bool, rect: CGRect) {
+        guard inside else {
+            if hovered?.column == column { hovered = nil } // (never one that came after: exits can arrive late)
+            return
+        }
         guard let panel = PanelController.shared?.panel, let content = panel.contentView else { return }
-        pending?.cancel()
-        guard inside, nav.dragging == nil, Date() >= quietUntil, UserDefaults.standard.bool(forKey: Prefs.hoverPreview) else { return } // leaving: the timer decides
         let at = panel.convertToScreen(NSRect(x: rect.minX, y: content.bounds.height - rect.maxY, width: rect.width, height: rect.height))
-        if model.shown, model.columns.first == column { source = at; return } // (one fading out is shown again)
-        // `source` changes only if this is shown: passing over a row on the way must not move what counts as near.
-        let work = DispatchWorkItem { [weak self] in self?.show(column, from: at) }
-        pending = work
-        // A short rest before the first one, so passing over rows doesn't flash windows. One showing switches
-        // after a rest too: on the way to it the pointer crosses other rows (a folder's subfolders under it),
-        // and switching to each one it passed made the card jump and show the wrong folder.
+        hovered = (column, at)
+        if model.shown, model.columns.first == column { // already on show (or fading out: shown again)
+            source = at
+            pending?.cancel()
+            pending = nil
+            return
+        }
+        arm(column)
+    }
+
+    /// What the pointer is resting on now, on screen.
+    private var hovered: (column: PreviewModel.Column, rect: NSRect)?
+
+    /// Where the pointer is (tests say where, so they don't depend on a real hand).
+    var pointer: () -> NSPoint = { NSEvent.mouseLocation }
+
+    /// A short rest before the first one, so passing over rows doesn't flash windows. One showing switches
+    /// after a rest too: on the way to it the pointer crosses other rows (a folder's subfolders under it),
+    /// and switching to each one it passed made the card jump and show the wrong folder.
+    private func arm(_ column: PreviewModel.Column, after wait: Double? = nil) {
+        pending?.cancel()
         let delay = Prefs.number(Prefs.previewDelay)
-        DispatchQueue.main.asyncAfter(deadline: .now() + (isShowing ? min(0.3, delay) : delay), execute: work)
+        let work = DispatchWorkItem { [weak self] in self?.attempt(column) }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (wait ?? (isShowing ? min(0.3, delay) : delay)), execute: work)
+    }
+
+    /// The rest is over: show it if the pointer is still on it; while the list is being scrolled or an item
+    /// dragged, look again soon instead of giving up.
+    private func attempt(_ column: PreviewModel.Column) {
+        pending = nil
+        guard let h = hovered, h.column == column, UserDefaults.standard.bool(forKey: Prefs.hoverPreview),
+              let c = PanelController.shared, c.shown, NSMouseInRect(pointer(), h.rect, false) else { return }
+        if model.shown, model.columns.first == column { return }
+        if nav.dragging != nil || Date() < quietUntil { return arm(column, after: 0.15) }
+        show(column, from: h.rect)
     }
 
     func hover(_ id: UUID, inside: Bool, rect: CGRect) { hover(.note(id), inside: inside, rect: rect) }
 
-    func hide() {
-        pending?.cancel()
+    func hide(keepingHover: Bool = false) {
+        if !keepingHover {
+            pending?.cancel()
+            pending = nil
+            hovered = nil
+        }
         peekPending?.cancel()
         timer?.invalidate()
         timer = nil
@@ -126,7 +166,7 @@ final class PreviewController: NSObject {
     }
 
     private func show(_ column: PreviewModel.Column, from at: NSRect) {
-        guard let c = PanelController.shared, c.shown, nav.dragging == nil, Date() >= quietUntil, NSMouseInRect(NSEvent.mouseLocation, at, false) else { return }
+        guard let c = PanelController.shared, c.shown, nav.dragging == nil, Date() >= quietUntil, NSMouseInRect(pointer(), at, false) else { return }
         source = at
         let first = !model.shown
         place(animated: !first) // level with what was hovered; its size never changes
@@ -146,11 +186,15 @@ final class PreviewController: NSObject {
     /// Hides once the pointer has been away from the hovered row, the cards, and the stretch between them (the
     /// card can sit higher than the row near the screen's bottom) for a moment.
     private func tick() {
-        let p = NSEvent.mouseLocation
-        let near = cards.reduce(source) { $0.union($1) }.insetBy(dx: -6, dy: -6).contains(p)
+        let p = pointer()
+        // On the way to another row (about to take over) it stays until that does.
+        let onNext = hovered.map { NSMouseInRect(p, $0.rect, false) } ?? false
+        let near = onNext || cards.reduce(source) { $0.union($1) }.insetBy(dx: -6, dy: -6).contains(p)
         let away = !near || nav.dragging != nil || PanelController.shared?.shown != true
         outside = away ? outside + 1 : 0
-        if Double(outside) * 0.1 >= max(0.1, Prefs.number(Prefs.previewHideDelay)) { hide() }
+        // Only the card goes: the row the pointer has moved to keeps its turn (hiding everything dropped it, and
+        // moving fast to a row far from the last one never brought its preview).
+        if Double(outside) * 0.1 >= max(0.1, Prefs.number(Prefs.previewHideDelay)) { hide(keepingHover: true) }
     }
 
     // MARK: Inside the window
