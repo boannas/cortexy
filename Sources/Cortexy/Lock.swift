@@ -111,7 +111,12 @@ extension Nav {
 
     // MARK: Locked notes
 
-    var anyLocked: Bool { store.folders.contains { $0.notes.contains { $0.lock != nil } } }
+    var anyLocked: Bool { store.folders.contains { $0.locked || $0.notes.contains { $0.lock != nil } } }
+
+    /// A sealed text any password for the locked notes must open: a locked note's, else a locked folder's check.
+    var lockSample: String? {
+        store.folders.lazy.flatMap(\.notes).first { $0.lock != nil }?.lock ?? store.folders.lazy.compactMap(\.lockCheck).first
+    }
 
     /// Locks a note with the password (chosen now if no note is locked yet). It stays open until it locks again.
     func lockNote(_ fid: UUID, _ nid: UUID) {
@@ -138,7 +143,9 @@ extension Nav {
         withPassword(creating: !anyLocked) { [self] password in
             guard let password else { return }
             if route != .folder(fid), store.chain(currentFolder).contains(where: { $0.id == fid }) { route = .folder(fid) } // out of its notes
-            store.updateFolder(fid) { $0.locked = true }
+            let salt = NoteLock.newSalt()
+            let check = NoteLock.seal("cortexy", key: NoteLock.key(password, salt: salt), salt: salt)
+            store.updateFolder(fid) { $0.locked = true; $0.lockCheck = check }
             seal(folder: fid, password)
             store.openFolders.remove(fid)
             flash("Folder locked")
@@ -147,7 +154,8 @@ extension Nav {
 
     func unlockFolder(_ fid: UUID, then done: @escaping () -> Void = {}) {
         guard store.lockedAway(fid) else { return done() }
-        let sample = store.subtree(fid).lazy.flatMap(\.notes).first { $0.lock != nil }?.lock
+        // Checked against a note in it, else its own check, else any locked note: never taken on trust.
+        let sample = store.subtree(fid).lazy.flatMap(\.notes).first { $0.lock != nil }?.lock ?? store.folder(fid)?.lockCheck ?? lockSample
         withPassword(creating: false, checking: sample) { [self] password in
             guard let password else { return }
             if let sample, let salt = NoteLock.salt(sample), NoteLock.open(sample, key: NoteLock.key(password, salt: salt)) == nil {
@@ -163,8 +171,11 @@ extension Nav {
     /// Takes the lock off a folder and off the notes in it.
     func removeFolderLock(_ fid: UUID) {
         unlockFolder(fid) { [self] in
-            for f in store.subtree(fid) { for n in f.notes where n.lock != nil { removeLock(f.id, n.id) } }
-            store.updateFolder(fid) { $0.locked = false }
+            // Only what the folder's lock sealed: a note that was locked on its own stays locked. (A folder locked
+            // before notes were marked has no check either: there every locked note counts as the folder's.)
+            let marked = store.folder(fid)?.lockCheck != nil
+            for f in store.subtree(fid) { for n in f.notes where n.lock != nil && (n.byFolder || !marked) { removeLock(f.id, n.id) } }
+            store.updateFolder(fid) { $0.locked = false; $0.lockCheck = nil }
             store.openFolders.remove(fid)
             flash("Folder lock removed")
         }
@@ -181,7 +192,7 @@ extension Nav {
         let salt = NoteLock.newSalt(), key = NoteLock.key(password, salt: salt)
         guard let box = NoteLock.seal(current.text, key: key, salt: salt) else { return }
         NoteLock.seal(attachmentsOf: current.text, in: store.attachmentsDirectory, key: key)
-        store.updateNote(fid, nid) { $0.lock = box; $0.lockedTitle = current.title; $0.text = "" }
+        store.updateNote(fid, nid) { $0.lock = box; $0.lockedTitle = current.title; $0.text = ""; $0.byFolder = true }
         store.removeHistory(nid)
         if let locked = store.note(fid, nid) { store.scrubCopies(of: locked) }
     }
@@ -220,7 +231,7 @@ extension Nav {
         unlock(nid) { [self] in
             guard let text = unlocked[nid], let key = keys[nid] else { return }
             NoteLock.open(attachmentsOf: text, in: store.attachmentsDirectory, key: key, toDir: store.attachmentsDirectory)
-            store.updateNote(fid, nid) { $0.text = text; $0.lock = nil; $0.lockedTitle = nil }
+            store.updateNote(fid, nid) { $0.text = text; $0.lock = nil; $0.lockedTitle = nil; $0.byFolder = false }
             unlocked[nid] = nil
             keys[nid] = nil
             salts[nid] = nil
@@ -232,8 +243,9 @@ extension Nav {
     func lockAll() {
         if let password { for f in store.folders where f.locked { seal(folder: f.id, password) } } // notes written in them meanwhile
         if !store.openFolders.isEmpty {
-            if store.lockedAway(currentFolder) { route = .folder(store.chain(currentFolder).first(where: \.locked)?.id ?? Folder.rootID) }
             store.openFolders = []
+            // Out of what just locked (this ran before the folders closed, so it never did).
+            if store.lockedAway(currentFolder) { route = .folder(store.chain(currentFolder).first(where: \.locked)?.id ?? Folder.rootID) }
         }
         password = nil
         keys = [:]
@@ -272,7 +284,7 @@ extension Nav {
     /// else against any locked note.
     private func askPassword(creating: Bool, checking target: String? = nil) -> String? {
         if let answer = Self.passwordAnswer { return answer } // tests answer for the person: no real prompt
-        let sample = target ?? store.folders.lazy.flatMap(\.notes).first { $0.lock != nil }?.lock
+        let sample = target ?? lockSample
         let entered: String?? = PanelController.shared?.modal {
             let alert = NSAlert()
             alert.messageText = creating ? "Choose a Password for Locked Notes" : "Enter the Locked Notes Password"

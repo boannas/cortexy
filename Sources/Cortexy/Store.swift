@@ -43,6 +43,7 @@ struct Note: Codable, Identifiable, Hashable, Pinnable {
     var archived = false // hidden from its folder and search; listed under Archive
     var lock: String?        // a locked note's sealed text (NoteLock); `text` is then empty
     var lockedTitle: String? // what a locked note is called (shown, like Apple Notes)
+    var byFolder = false     // sealed because its folder was locked (taking the folder's lock off opens it; a note locked alone stays)
 
     var title: String { lock != nil ? (lockedTitle ?? "Locked Note") : MD.title(text) }
     /// Nothing in it (a locked note never counts as empty: its text is just out of sight).
@@ -66,6 +67,7 @@ struct Note: Codable, Identifiable, Hashable, Pinnable {
         archived = try c.decodeIfPresent(Bool.self, forKey: .archived) ?? false
         lock = try c.decodeIfPresent(String.self, forKey: .lock)
         lockedTitle = try c.decodeIfPresent(String.self, forKey: .lockedTitle)
+        byFolder = try c.decodeIfPresent(Bool.self, forKey: .byFolder) ?? false
     }
 }
 
@@ -93,6 +95,7 @@ struct Folder: Codable, Identifiable, Hashable, Pinnable {
     var deleted: Date? // set on a folder moved to Recently Deleted
     var origin: UUID?  // where it was deleted from
     var locked = false // its notes are sealed, and it shows nothing until unlocked (Nav.lockFolder)
+    var lockCheck: String? // a sealed known text: tells a right password from a wrong one even with no locked note in the folder
     var notes: [Note] = []
 
     /// Display order: pinned first, each group in the folder's sort order. Archived notes aren't shown.
@@ -122,6 +125,7 @@ struct Folder: Codable, Identifiable, Hashable, Pinnable {
         deleted = try c.decodeIfPresent(Date.self, forKey: .deleted)
         origin = try c.decodeIfPresent(UUID.self, forKey: .origin)
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        lockCheck = try c.decodeIfPresent(String.self, forKey: .lockCheck)
         notes = try c.decodeIfPresent([Note].self, forKey: .notes) ?? []
     }
 }

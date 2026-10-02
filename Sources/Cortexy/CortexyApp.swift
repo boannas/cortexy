@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ n: Notification) {
+        controller?.nav.lockAll() // notes written in an open locked folder are sealed before they're saved
         controller?.store.save()
     }
 

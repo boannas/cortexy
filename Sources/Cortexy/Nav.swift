@@ -167,7 +167,9 @@ import UniformTypeIdentifiers
     /// A smart folder holds no notes, so they go next to it.
     private func targetFolder(named name: String?) -> UUID {
         if let name, !name.isEmpty {
-            return store.moveTargets.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }?.id ?? store.addFolder(name)
+            func named(_ f: Folder) -> Bool { f.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
+            // One locked away counts too (found, then refused): it mustn't be matched by a second folder of its name.
+            return store.moveTargets.first(where: named)?.id ?? store.folders.first { named($0) && store.lockedAway($0.id) }?.id ?? store.addFolder(name)
         }
         guard let f = store.folder(currentFolder), !store.inTrash(f.id) else { return Folder.rootID }
         return f.query == nil ? f.id : store.parentID(f) ?? Folder.rootID
@@ -175,7 +177,8 @@ import UniformTypeIdentifiers
 
     @discardableResult func newNote(text: String = "", folderName: String? = nil, open: Bool = true) -> UUID? {
         let fid = targetFolder(named: folderName)
-        guard let n = store.addNote(to: fid, text: text) else { return nil }
+        // Into a folder that's locked away it would sit there as plain text until the folder is next opened.
+        guard !refuseLockedAway(fid), let n = store.addNote(to: fid, text: text) else { return nil }
         if open {
             search = ""
             route = .note(fid, n)
@@ -183,10 +186,25 @@ import UniformTypeIdentifiers
         return n
     }
 
+    /// Nothing is added to or moved into a folder that's locked away (it would be stored unsealed): says so, and true.
+    private func refuseLockedAway(_ fid: UUID) -> Bool {
+        guard store.lockedAway(fid) else { return false }
+        flash("Unlock “\(store.folder(fid)?.name ?? "the folder")” first")
+        return true
+    }
+
+    /// A row on no screen right now: inside a folder that's locked away.
+    func isHidden(_ id: UUID) -> Bool {
+        if let f = store.folderOf(id) { return store.lockedAway(f.id) }
+        if let f = store.folder(id), let p = store.parentID(f) { return store.lockedAway(p) }
+        return false
+    }
+
     /// A new folder inside the open one.
     func newFolder() {
         search = ""
         let parent = targetFolder(named: nil)
+        guard !refuseLockedAway(parent) else { return }
         route = .folder(parent)
         renaming = store.addFolder("New Folder", in: parent)
     }
@@ -337,10 +355,10 @@ import UniformTypeIdentifiers
 
     /// Notes and folders among the marked rows (folders inside other marked folders go with their parent).
     private var markedItems: (notes: [(UUID, Note)], folders: [Folder]) {
-        let folders = marked.compactMap(store.folder).filter { f in
+        let folders = marked.filter { !isHidden($0) }.compactMap(store.folder).filter { f in
             !store.chain(f.id).dropLast().contains { marked.contains($0.id) }
         }
-        let notes = marked.compactMap { id in store.folderOf(id).flatMap { f in store.note(f.id, id).map { (f.id, $0) } } }
+        let notes = marked.filter { !isHidden($0) }.compactMap { id in store.folderOf(id).flatMap { f in store.note(f.id, id).map { (f.id, $0) } } }
             .filter { fid, _ in !store.chain(fid).contains { marked.contains($0.id) } }
         return (notes, folders)
     }
@@ -353,6 +371,7 @@ import UniformTypeIdentifiers
     }
 
     func moveMarked(to target: UUID) {
+        guard !refuseLockedAway(target) else { return }
         let (notes, folders) = markedItems
         for (fid, n) in notes { store.moveNote(n.id, from: fid, to: target) }
         for f in folders { store.moveFolder(f.id, into: target) }
@@ -529,6 +548,15 @@ import UniformTypeIdentifiers
         }.max { a, b in a.0 == currentFolder ? false : b.0 == currentFolder ? true : a.1.modified < b.1.modified }
     }
 
+    /// The note a `[[title]]` means when it's in a folder that's locked away (its title stays readable).
+    private func lockedAwayNote(titled title: String) -> (UUID, Note)? {
+        let t = title.trimmingCharacters(in: .whitespaces)
+        for f in store.folders where store.lockedAway(f.id) {
+            if let n = f.notes.first(where: { $0.title.localizedCaseInsensitiveCompare(t) == .orderedSame }) { return (f.id, n) }
+        }
+        return nil
+    }
+
     /// Notes with a `[[…]]` to this title.
     func backlinks(to title: String, excluding nid: UUID) -> [(Folder, Note)] {
         store.liveFolders.flatMap { f in
@@ -551,7 +579,11 @@ import UniformTypeIdentifiers
                   !title.isEmpty else { return false }
             search = ""
             if let (fid, n) = resolve(title: title) { route = .note(fid, n.id) }
-            else if let id = store.addNote(to: targetFolder(named: nil), text: "# \(title)\n") {
+            else if let (fid, n) = lockedAwayNote(titled: title) { // there, behind its folder's lock: ask to open it, don't make a copy
+                let door = store.chain(fid).first { $0.locked && !store.openFolders.contains($0.id) }?.id ?? fid
+                unlockFolder(door) { [self] in activate(fid, n) }
+            }
+            else if !refuseLockedAway(targetFolder(named: nil)), let id = store.addNote(to: targetFolder(named: nil), text: "# \(title)\n") {
                 stub = (id, "# \(title)\n")
                 route = .note(targetFolder(named: nil), id)
             }
@@ -707,7 +739,7 @@ import UniformTypeIdentifiers
         var fid = targetFolder(named: nil)
         if fid == templatesFolder?.id { fid = Folder.rootID }
         let (text, caret) = Nav.expand(template.text, folder: store.folder(fid)?.name ?? "")
-        guard let id = store.addNote(to: fid, text: text) else { return }
+        guard !refuseLockedAway(fid), let id = store.addNote(to: fid, text: text) else { return }
         store.updateNote(fid, id) { $0.color = template.color; $0.code = template.code }
         open(fid, id, caret: caret)
     }
@@ -866,6 +898,7 @@ import UniformTypeIdentifiers
         if !search.isEmpty { return searchHits.map(\.1.id) }
         switch route {
         case .folder(let f):
+            if store.lockedAway(f) { return [] } // the screen shows only “Locked”
             if let q = store.folder(f)?.query { return hits(Query(q)).map(\.1.id) }
             // In the order the screen shows them: folders, then the Smart Folders section, then notes.
             let rows = folderRows(f), smart = { (r: (folder: Folder, depth: Int)) in r.depth == 0 && r.folder.query != nil }
@@ -885,7 +918,7 @@ import UniformTypeIdentifiers
 
     /// Return: open the selected row (or the first search hit).
     func openSelection() -> Bool {
-        guard let id = selection ?? (search.isEmpty ? nil : visibleIDs.first) else { return false }
+        guard let id = selection ?? (search.isEmpty ? nil : visibleIDs.first), !isHidden(id) else { return false }
         if store.folder(id) != nil {
             route = .folder(id)
         } else if let f = store.folderOf(id), let n = store.note(f.id, id) {
@@ -896,7 +929,7 @@ import UniformTypeIdentifiers
 
     func deleteSelection() {
         if !marked.isEmpty { return deleteMarked() }
-        guard let id = selection else { return }
+        guard let id = selection, !isHidden(id) else { return }
         if let f = store.folder(id) { requestDelete(.folder(f)) }
         else if let f = store.folderOf(id), let n = store.note(f.id, id) { requestDelete(.note(f.id, n)) }
     }
@@ -923,6 +956,7 @@ import UniformTypeIdentifiers
     /// A row dropped onto a folder row moves into it; onto Recently Deleted, it's deleted (with Undo).
     /// Dragging a marked row takes every marked row along.
     func drop(_ id: UUID, into target: UUID) {
+        guard !isHidden(id), !refuseLockedAway(target) else { return }
         if marked.contains(id) {
             return target == Folder.trashID ? deleteMarked() : moveMarked(to: target)
         }
@@ -952,6 +986,7 @@ import UniformTypeIdentifiers
         }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let fid = targetFolder(named: nil)
+        guard !refuseLockedAway(fid) else { return true } // taken (and told), not passed on to something else
         store.addNote(to: fid, text: text)
         flash("Added")
         return true

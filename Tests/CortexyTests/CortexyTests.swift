@@ -1704,3 +1704,96 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(h.tv.markdown() == "| ACB | AAA |\n| --- | --- |\n|sasd | dasd|\n")
     #expect(glyphsAreCurrent(h.tv))
 }
+
+/// What used to get past a locked folder: new notes and drops landing in it as plain text, ⌘A / Delete reaching
+/// rows nobody can see, an empty one taking any password, the lock of single notes lost with the folder's,
+/// [[links]] into it making copies, and the screen staying inside it after it locked.
+@MainActor @Test func lockedFoldersKeepTheirSecrets() {
+    Nav.passwordAnswer = .some(nil) // never a real password prompt or alert
+    defer { Nav.passwordAnswer = nil }
+    let s = Store(directory: tempDir())
+    let nav = Nav(store: s)
+    let work = s.addFolder("Work"), sub = s.addFolder("Deep", in: work), other = s.addFolder("Other")
+    let a = s.addNote(to: work, text: "# Salary\n42000")!, b = s.addNote(to: sub, text: "# Contract\nsecret")!
+    let x = s.addNote(to: other, text: "# Loose")!
+    nav.password = "pw"
+    nav.lockFolder(work)
+    nav.lockAll()                                                   // closed: password forgotten, folder locked away
+    let notes = s.folders.flatMap(\.notes).count
+
+    // Nothing new goes in; nothing is moved in.
+    nav.route = .folder(work)
+    #expect(nav.newNote() == nil && nav.newNote(folderName: "Work") == nil && s.folders.flatMap(\.notes).count == notes)
+    nav.drop(x, into: work)
+    #expect(s.folderOf(x)?.id == other)
+    nav.marked = [x]
+    nav.moveMarked(to: work)
+    #expect(s.folderOf(x)?.id == other)
+    nav.marked = []
+
+    // Its rows are on no screen: ⌘A marks nothing, Delete / Return on a stale selection reach nothing.
+    #expect(nav.visibleIDs.isEmpty)
+    nav.markAll()
+    #expect(nav.marked.isEmpty)
+    nav.selection = a
+    nav.deleteSelection()
+    #expect(!nav.openSelection() && s.note(work, a) != nil && s.folderOf(a)?.id == work)
+    nav.marked = [a, b]
+    nav.deleteMarked()
+    #expect(s.note(work, a) != nil && s.note(sub, b) != nil)
+    nav.marked = []
+
+    // A [[link]] to a note in it asks to open the folder; it doesn't make a note of the same name.
+    nav.openLink(URL(string: "cortexy://open?title=Salary")!)
+    #expect(s.folders.flatMap(\.notes).count == notes)
+
+    // An empty locked folder still tells a wrong password from the right one.
+    let empty = s.addFolder("Empty")
+    nav.password = "pw"
+    nav.lockFolder(empty)
+    #expect(s.folder(empty)!.lockCheck != nil)
+    nav.lockAll()
+    nav.password = "wrong"
+    nav.unlockFolder(empty)
+    #expect(s.lockedAway(empty))
+    nav.password = "pw"
+    nav.unlockFolder(empty)
+    #expect(!s.lockedAway(empty))
+    nav.lockAll()
+
+    // Taking the folder's lock off leaves a note that was locked on its own locked.
+    let mixed = s.addFolder("Mixed")
+    let own = s.addNote(to: mixed, text: "# Mine alone")!, plain = s.addNote(to: mixed, text: "# Plain")!
+    nav.password = "pw"
+    nav.lockNote(mixed, own)
+    #expect(s.note(mixed, own)!.lock != nil && !s.note(mixed, own)!.byFolder)
+    nav.lockFolder(mixed)
+    #expect(s.note(mixed, plain)!.lock != nil && s.note(mixed, plain)!.byFolder)
+    nav.removeFolderLock(mixed)
+    #expect(!s.folder(mixed)!.locked && s.note(mixed, plain)!.lock == nil && s.note(mixed, own)!.lock != nil)
+
+    // Locking while the screen is inside it takes the screen out.
+    nav.password = "pw"
+    nav.unlockFolder(work)
+    nav.route = .folder(sub)
+    nav.lockAll()
+    #expect(s.lockedAway(work) && nav.route == .folder(work))
+}
+
+/// A folder locked by an earlier version (no check, no per-note mark) still gives all its notes back.
+@MainActor @Test func olderLockedFoldersOpenFully() {
+    Nav.passwordAnswer = .some(nil)
+    defer { Nav.passwordAnswer = nil }
+    let s = Store(directory: tempDir())
+    let nav = Nav(store: s)
+    let f = s.addFolder("Old")
+    let n = s.addNote(to: f, text: "# Kept\nbody")!
+    nav.password = "pw"
+    nav.lockFolder(f)
+    s.updateFolder(f) { $0.lockCheck = nil }                      // as written before the check existed
+    s.updateNote(f, n) { $0.byFolder = false }
+    nav.lockAll()
+    nav.password = "pw"
+    nav.removeFolderLock(f)
+    #expect(s.note(f, n)!.lock == nil && s.note(f, n)!.text == "# Kept\nbody")
+}
