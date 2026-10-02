@@ -102,7 +102,7 @@ enum Prefs {
         hotSide: true, side: "right", width: 360.0, edgeDelay: 0.15, openBar: false, menuBarIcon: true, hoverPreview: true,
         hideDelay: 0.35, previewDelay: 0.45, previewHideDelay: 0.2, previewWidth: 0.0, undoSeconds: 5.0, showTags: true,
         codeTab: 4, trashDays: 30, backupsKept: 14,
-        templatesFolder: "Templates", dailyFolder: "Daily", dailyTemplate: "", dateFormat: "yyyy-MM-dd", todayKey: "", systemCalendar: false, versionsKept: 50, webImages: true, reminders: true, remindAt: 9, touchID: false, lockOnHide: true,
+        templatesFolder: "Templates", dailyFolder: "Daily", dailyTemplate: "", dateFormat: "yyyy-MM-dd", todayKey: "", systemCalendar: false, versionsKept: 50, webImages: false, reminders: true, remindAt: 9, touchID: false, lockOnHide: true,
         toggleKey: HotKeySpec(keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), display: "⌃⌥N").encoded,
         newNoteKey: "",
     ]
@@ -565,7 +565,7 @@ final class PanelController: NSObject {
         let shift = mods.contains(.shift)
         // A note in its own window gets the editor's formatting keys too.
         if w.firstResponder is MarkdownTextView {
-            let format = ["b": "cxBold:", "i": "cxItalic:", "e": "cxCode:", "k": "cxLink:", "l": "cxTask:"]
+            let format = ["b": "cxBold:", "i": "cxItalic:", "e": "cxCode:", "k": "cxLink:", "l": "cxTask:", "[": "cxOutdent:", "]": "cxIndent:"]
             if shift, let action = MarkdownTextView.shiftFormat[key] { return NSApp.sendAction(Selector(action), to: nil, from: w) }
             if !shift, let action = format[key] { return NSApp.sendAction(Selector(action), to: nil, from: w) }
         }
@@ -702,6 +702,9 @@ final class PanelController: NSObject {
         case ("o", false): nav.palette = .open
         case ("p", false): nav.palette = .commands
         case ("g", false): GraphWindow.shared.show(nav: nav)
+        // In a note ⌘[ / ⌘] move lines out and in (Notes, Pages); elsewhere ⌘[ is Back (← too, and the back button).
+        case ("[", false) where isEditingNote && inText: return NSApp.sendAction(#selector(MarkdownTextView.cxOutdent(_:)), to: nil, from: panel)
+        case ("]", false) where isEditingNote && inText: return NSApp.sendAction(#selector(MarkdownTextView.cxIndent(_:)), to: nil, from: panel)
         case ("[", false): nav.back()
         case (",", false): SettingsWindow.show()
         case ("w", false): hide()

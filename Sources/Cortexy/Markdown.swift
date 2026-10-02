@@ -22,6 +22,13 @@ enum MD {
     static let imageRegex = try! NSRegularExpression(pattern: #"!\[((?:\\.|[^\]\\\n])*)\]\(([^)\s]+)\)"#)
     static let fileLinkRegex = try! NSRegularExpression(pattern: #"(?<!!)\[((?:\\.|[^\]\\\n])+)\]\((file://[^)\s]+)\)"#)
 
+    /// The web addresses of the images the text shows (`![…](https://…)`).
+    static func webImages(_ text: String) -> [String] {
+        let ns = text as NSString
+        return imageRegex.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { ns.substring(with: $0.range(at: 2)) }
+            .filter { $0.hasPrefix("https://") || $0.hasPrefix("http://") }
+    }
+
     /// Escapes `[`, `]` and `\` so a file name can sit inside link text.
     static func escape(_ s: String) -> String {
         s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "[", with: "\\[").replacingOccurrences(of: "]", with: "\\]")

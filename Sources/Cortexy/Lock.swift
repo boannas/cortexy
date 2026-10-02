@@ -82,6 +82,18 @@ extension NoteLock {
     }
 }
 
+extension NoteLock {
+    /// A locked note's attachments, sealed again under a new key (a changed password).
+    static func reseal(attachmentsOf text: String, in dir: URL, from old: SymmetricKey, to new: SymmetricKey) {
+        for name in attachments(text) {
+            let url = dir.appendingPathComponent(name + ".locked")
+            guard let data = try? Data(contentsOf: url), let box = try? AES.GCM.SealedBox(combined: data),
+                  let plain = try? AES.GCM.open(box, using: old), let sealed = try? AES.GCM.seal(plain, using: new).combined else { continue }
+            try? sealed.write(to: url, options: .atomic)
+        }
+    }
+}
+
 /// The password in the login keychain, for Touch ID (Settings → Data).
 enum Keychain {
     private static let query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: "com.cortexy.app.locked-notes",
@@ -237,6 +249,69 @@ extension Nav {
             salts[nid] = nil
             flash("Lock removed")
         }
+    }
+
+    /// A new password for every locked note and folder: each is opened with the old one and sealed again with the
+    /// new (attachments too). Everything is opened first, so if `old` isn't the password, or a note won't open
+    /// with it (locked on another Mac with another one), nothing is changed and it returns false.
+    // ponytail: two key derivations per locked note (~0.1 s each); fine for tens of notes, slow for hundreds.
+    @discardableResult func changePassword(from old: String, to new: String) -> Bool {
+        guard !new.isEmpty else { return false }
+        if let sample = lockSample, let salt = NoteLock.salt(sample), NoteLock.open(sample, key: NoteLock.key(old, salt: salt)) == nil { return false }
+        var opened: [(fid: UUID, nid: UUID, text: String, key: SymmetricKey)] = []
+        for f in store.folders {
+            for n in f.notes where n.lock != nil {
+                guard let box = n.lock, let salt = NoteLock.salt(box) else { return false }
+                let key = NoteLock.key(old, salt: salt)
+                guard let text = NoteLock.open(box, key: key) else { return false }
+                opened.append((f.id, n.id, text, key))
+            }
+        }
+        for o in opened {
+            let salt = NoteLock.newSalt(), key = NoteLock.key(new, salt: salt)
+            guard let box = NoteLock.seal(o.text, key: key, salt: salt) else { continue }
+            NoteLock.reseal(attachmentsOf: o.text, in: store.attachmentsDirectory, from: o.key, to: key)
+            store.updateNote(o.fid, o.nid) { $0.lock = box }
+            if keys[o.nid] != nil { keys[o.nid] = key; salts[o.nid] = salt } // open now: edits keep sealing, with the new one
+        }
+        for f in store.folders where f.lockCheck != nil {
+            let salt = NoteLock.newSalt()
+            store.updateFolder(f.id) { $0.lockCheck = NoteLock.seal("cortexy", key: NoteLock.key(new, salt: salt), salt: salt) }
+        }
+        if password != nil { password = new }
+        if UserDefaults.standard.bool(forKey: Prefs.touchID) { Keychain.save(new) }
+        store.save()
+        return true
+    }
+
+    /// Settings → Change Password…: the current one and the new one twice.
+    func askToChangePassword() {
+        let answer: (String, String)?? = PanelController.shared?.modal {
+            let alert = NSAlert()
+            alert.messageText = "Change the Locked Notes Password"
+            alert.informativeText = "Every locked note and folder is sealed again with the new password. Backups made before keep the old one."
+            let fields = (0..<3).map { i in
+                let f = NSSecureTextField(frame: NSRect(x: 0, y: CGFloat(2 - i) * 30, width: 260, height: 24))
+                f.placeholderString = ["Current password", "New password", "New password again"][i]
+                return f
+            }
+            let box = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 84))
+            fields.forEach(box.addSubview)
+            alert.accessoryView = box
+            alert.addButton(withTitle: "Change")
+            alert.addButton(withTitle: "Cancel")
+            alert.window.initialFirstResponder = fields[0]
+            guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+            guard !fields[1].stringValue.isEmpty, fields[1].stringValue == fields[2].stringValue else {
+                let oops = NSAlert()
+                oops.messageText = "The new passwords didn't match."
+                oops.runModal()
+                return nil
+            }
+            return (fields[0].stringValue, fields[1].stringValue)
+        }
+        guard let (old, new) = answer ?? nil else { return }
+        if changePassword(from: old, to: new) { flash("Password changed") } else { wrongPassword() }
     }
 
     /// Forgets every unlocked text, key and the password (the panel closing, the screen sleeping, Lock All Now).

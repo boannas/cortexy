@@ -78,7 +78,7 @@ struct GeneralSettings: View {
     @AppStorage(Prefs.undoSeconds) private var undoSeconds = 5.0
     @AppStorage(Prefs.showTags) private var showTags = true
     @AppStorage(Prefs.codeTab) private var codeTab = 4
-    @AppStorage(Prefs.webImages) private var webImages = true
+    @AppStorage(Prefs.webImages) private var webImages = false
     @AppStorage(Prefs.reminders) private var reminders = true
     @AppStorage(Prefs.remindAt) private var remindAt = 9
     @AppStorage(Prefs.templatesFolder) private var templatesFolder = "Templates"
@@ -128,8 +128,8 @@ struct GeneralSettings: View {
                     Text("Side bar").tag("bar")
                 }
                 Toggle("Show tags on the home screen", isOn: $showTags)
-                Toggle("Load images from the web", isOn: $webImages)
-                    .help("For ![](https://…) in notes. Off, they stay links and nothing is fetched (no tracking pixels).")
+                Toggle("Load web images in every note", isOn: $webImages)
+                    .help("For ![](https://…) in notes. Off, a note's web images load only after you press Load in it: fetching one tells its server you opened the note.")
                 ValueSlider(title: "Undo stays offered for", value: $undoSeconds, range: 2...20, step: 1) { "\(Int($0)) s" }
                 Picker("Tab in code mode", selection: $codeTab) {
                     ForEach([2, 4, 8], id: \.self) { Text("\($0) spaces").tag($0) }
@@ -191,8 +191,38 @@ struct GeneralSettings: View {
                 Text("Without the menu bar icon, open Settings from the panel's ⋯ menu or with ⌘, while the panel is open.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            RestoreDefaults(keys: Self.keys)
         }
         .formStyle(.grouped)
+    }
+
+    /// What this tab sets (launch at login is the system's, not reset).
+    static let keys = [Prefs.hotSide, Prefs.side, Prefs.edgeDelay, Prefs.hideDelay, Prefs.width, Prefs.openBar, Prefs.menuBarIcon, "colorStyle",
+                       Prefs.hoverPreview, Prefs.previewDelay, Prefs.previewHideDelay, Prefs.previewWidth, Prefs.undoSeconds, Prefs.showTags,
+                       Prefs.codeTab, Prefs.webImages, Prefs.reminders, Prefs.remindAt, Prefs.templatesFolder, Prefs.dailyFolder,
+                       Prefs.dailyTemplate, Prefs.dateFormat, Prefs.systemCalendar, Prefs.dateLanguage]
+}
+
+/// A tab's "Restore Defaults": its settings back to how Cortexy comes (asks first).
+struct RestoreDefaults: View {
+    let keys: [String]
+    var also: () -> Void = {}
+
+    var body: some View {
+        let changed = keys.contains { UserDefaults.standard.object(forKey: $0) != nil } // set by hand (defaults aren't stored)
+        HStack {
+            Spacer()
+            Button("Restore Defaults…") {
+                let a = NSAlert()
+                a.messageText = "Restore this tab's settings to how Cortexy comes?"
+                a.addButton(withTitle: "Restore")
+                a.addButton(withTitle: "Cancel")
+                guard a.runModal() == .alertFirstButtonReturn else { return }
+                for k in keys { UserDefaults.standard.removeObject(forKey: k) }
+                also()
+            }
+            .disabled(!changed)
+        }
     }
 }
 
@@ -496,16 +526,18 @@ struct ShortcutSettings: View {
             Section("In the panel") {
                 ForEach(Self.panelKeys, id: \.0) { name, keys in LabeledContent(name, value: keys) }
             }
+            // The three global ones; shortcuts you made stay (each has its own remove button).
+            RestoreDefaults(keys: [Prefs.toggleKey, Prefs.newNoteKey, Prefs.todayKey]) { PanelController.shared?.registerHotKeys() }
         }
         .formStyle(.grouped)
     }
 
     static let panelKeys: [(String, String)] = [
-        ("New note / folder", "⌘N / ⇧⌘N"), ("Today's note", "⌘D"), ("Search", "⌘F"), ("Quick open / commands", "⌘O / ⌘P"), ("Back", "⌘[ or ←"),
+        ("New note / folder", "⌘N / ⇧⌘N"), ("Today's note", "⌘D"), ("Search", "⌘F"), ("Quick open / commands", "⌘O / ⌘P"), ("Back", "⌘[ or ← (outside a note)"),
         ("Move selection / open", "↑ ↓ / ↩"), ("Fold selected note", "Space"), ("Delete selected", "⌘⌫"),
         ("Move note to folder", "⇧⌘M"), ("Select several notes or folders", "⌘-click / ⇧-click / ⌘A"),
         ("Bold / italic / code / link", "⌘B / ⌘I / ⌘E / ⌘K"), ("Checklist / strikethrough", "⌘L / ⇧⌘X"),
-        ("Indent list item", "⇥ / ⇧⇥"), ("Hide panel", "Esc or ⌘W"), ("Settings", "⌘,"),
+        ("Indent list item", "⇥ / ⇧⇥"), ("Lines in / out in a note", "⌘] / ⌘["), ("Hide panel", "Esc or ⌘W"), ("Settings", "⌘,"),
     ]
 }
 
@@ -712,6 +744,8 @@ struct DataSettings: View {
                 Toggle("Lock again when the panel closes", isOn: $lockOnHide)
                 HStack {
                     Spacer()
+                    Button("Change Password…") { PanelController.shared?.nav.askToChangePassword() }
+                        .disabled(PanelController.shared?.nav.anyLocked != true)
                     Button("Lock All Now") { PanelController.shared?.nav.lockAll() }
                 }
             } header: {
@@ -748,6 +782,8 @@ struct DataSettings: View {
                 LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")
                 LabeledContent("Scripting", value: "cortexy:// links · AppleScript · Services menu")
             }
+            // Not the notes folder, Touch ID or the password: those aren't settings to undo by accident.
+            RestoreDefaults(keys: [Prefs.trashDays, Prefs.backupsKept, Prefs.versionsKept, Prefs.lockOnHide])
         }
         .formStyle(.grouped)
     }

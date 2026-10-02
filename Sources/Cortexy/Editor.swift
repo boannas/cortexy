@@ -462,9 +462,10 @@ enum Attachments {
 
     private static func isWeb(_ url: URL) -> Bool { url.scheme == "http" || url.scheme == "https" }
 
-    /// Right now, for the editor (it needs the size to lay out): a local file, or a web image once fetched.
-    static func image(at url: URL) -> NSImage? {
-        if isWeb(url) { return WebImages.shared.image(url) }
+    /// Right now, for the editor (it needs the size to lay out): a local file, or a web image once fetched
+    /// (fetched only if `note` allows it).
+    static func image(at url: URL, note: UUID? = nil) -> NSImage? {
+        if isWeb(url) { return WebImages.shared.image(url, note: note) }
         guard url.isFileURL else { return nil }
         if let hit = cache.object(forKey: url.path as NSString) { return hit }
         guard let img = decode(url) else { return nil }
@@ -473,8 +474,8 @@ enum Attachments {
     }
 
     /// For cards: the image if it's ready, else nil while it's decoded off the main thread (scrolling never waits).
-    static func imageSoon(at url: URL) -> NSImage? {
-        if isWeb(url) { return WebImages.shared.image(url) }
+    static func imageSoon(at url: URL, note: UUID? = nil) -> NSImage? {
+        if isWeb(url) { return WebImages.shared.image(url, note: note) }
         guard url.isFileURL else { return nil }
         let key = url.path
         if let hit = cache.object(forKey: key as NSString) { return hit }
@@ -566,6 +567,7 @@ final class MarkdownTextView: NSTextView {
     var previewing = false // read-only preview: no paragraph is being edited, so all markup stays hidden
     var onPreviewClick: () -> Void = {} // previews: a click that isn't on a link
     var resolve: (String) -> URL? = { _ in nil }
+    var noteID: UUID? // whose text this is: whether its web images may be fetched
     var importFile: (URL) -> String = { $0.absoluteString }
     var importImage: (NSImage) -> String? = { _ in nil }
     private var lastActive = NSRange(location: NSNotFound, length: 0)
@@ -598,7 +600,7 @@ final class MarkdownTextView: NSTextView {
                 let a: NSTextAttachment
                 let open: URL?
                 if isImage {
-                    guard let url = resolve(target), let img = Attachments.image(at: url) else { continue }
+                    guard let url = resolve(target), let img = Attachments.image(at: url, note: noteID) else { continue }
                     a = Attachments.imageAttachment(img, maxWidth: maxImageWidth)
                     open = url
                 } else {
@@ -619,6 +621,7 @@ final class MarkdownTextView: NSTextView {
     func load(_ markdown: String) {
         if textStorage?.delegate == nil {
             NotificationCenter.default.addObserver(self, selector: #selector(webImageArrived(_:)), name: WebImages.arrived, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(webImagesAllowed(_:)), name: WebImages.allowed, object: nil)
         }
         textStorage?.delegate = self
         // A long note is laid out where it's looked at, not from its start to the caret first (the editor stops
@@ -631,6 +634,14 @@ final class MarkdownTextView: NSTextView {
         undoManager?.removeAllActions() // old undo ranges point into the text we just replaced
         restyle(force: true)
         DispatchQueue.main.async { [weak self] in self?.didResize?() }
+    }
+
+    /// This note's web images were just allowed: read it again, so its image links ask for them.
+    @objc private func webImagesAllowed(_ n: Notification) {
+        guard let id = n.object as? UUID, id == noteID else { return }
+        let caret = selectedRange()
+        load(markdown())
+        setSelectedRange(NSRange(location: min(caret.location, (string as NSString).length), length: 0))
     }
 
     /// A web image this note shows just arrived: show it in place of its link, keeping the caret where it was.
@@ -1315,6 +1326,13 @@ final class MarkdownTextView: NSTextView {
         transformLines { $0.hasPrefix("  ") ? String($0.dropFirst(2)) : $0.hasPrefix("\t") ? String($0.dropFirst()) : $0 }
     }
 
+    /// ⌘] / ⌘[ (as in Notes and Pages): the selected lines one level in or out, whatever they are.
+    @objc func cxIndent(_ sender: Any?) { transformLines { "  " + $0 } }
+    @objc func cxOutdent(_ sender: Any?) {
+        guard currentLine.hasPrefix(" ") || currentLine.hasPrefix("\t") || selectedRange().length > 0 else { return }
+        transformLines { $0.hasPrefix("  ") ? String($0.dropFirst(2)) : $0.hasPrefix("\t") ? String($0.dropFirst()) : $0 }
+    }
+
     /// Return inside a list continues it; Return on an empty item ends it. Tables get a new row.
     func continueList() -> Bool {
         guard !inCode else { return false }
@@ -1480,6 +1498,7 @@ struct MarkdownEditor: NSViewRepresentable {
         tv.autoresizingMask = [.width]
         tv.textContainer?.widthTracksTextView = true
         configure(tv)
+        tv.noteID = caretKey // the note's own say on fetching its web images
         let remembered = caretKey.flatMap { Self.carets[$0] } // read first: loading moves the caret (and reports it)
         tv.load(text)
         // Back where you were in this note, else at its end.

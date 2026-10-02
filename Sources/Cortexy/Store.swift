@@ -793,21 +793,36 @@ extension JSONEncoder {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Cortexy/Web", isDirectory: true)
     }
 
-    /// Whether it may still show up: web images are on and fetching it hasn't failed.
-    func coming(_ url: URL) -> Bool {
-        ((UserDefaults.standard.object(forKey: Prefs.webImages) as? Bool) ?? true) && !failed.contains(url)
+    /// Fetching an image tells its server the note was opened (a tracking pixel can do just that), so it's done only
+    /// with Settings' "every note" on, or for a note whose images were loaded with its "Load" button.
+    func allows(_ note: UUID?) -> Bool {
+        (UserDefaults.standard.object(forKey: Prefs.webImages) as? Bool ?? false) || note.map(allowedNotes.contains) == true
     }
 
-    /// The image if it's here; otherwise nil, and it's fetched (once) for next time.
-    func image(_ url: URL) -> NSImage? {
-        guard (UserDefaults.standard.object(forKey: Prefs.webImages) as? Bool) ?? true else { return nil }
+    /// A note's "Load Images": its web images, now and from then on.
+    func allow(_ note: UUID) {
+        allowedNotes.insert(note)
+        UserDefaults.standard.set(allowedNotes.map(\.uuidString), forKey: Self.allowedKey)
+        arrivals += 1 // cards look again
+        NotificationCenter.default.post(name: Self.allowed, object: note)
+    }
+    static let allowed = Notification.Name("CortexyWebImagesAllowed")
+    private static let allowedKey = "webImageNotes"
+    @ObservationIgnored private var allowedNotes = Set((UserDefaults.standard.stringArray(forKey: "webImageNotes") ?? []).compactMap(UUID.init(uuidString:)))
+
+    /// Whether it may still show up: fetching is allowed for its note and hasn't failed.
+    func coming(_ url: URL, note: UUID?) -> Bool { allows(note) && !failed.contains(url) }
+
+    /// The image if it's here (fetched before: showing it asks no server); otherwise nil, and it's fetched (once)
+    /// for next time if its note allows that.
+    func image(_ url: URL, note: UUID?) -> NSImage? {
         if let hit = memory.object(forKey: url as NSURL) { return hit }
         let file = directory.appendingPathComponent(SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined())
         if let img = NSImage(contentsOf: file) {
             memory.setObject(img, forKey: url as NSURL)
             return img
         }
-        fetch(url, to: file)
+        if allows(note) { fetch(url, to: file) }
         return nil
     }
 

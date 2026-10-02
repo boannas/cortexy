@@ -380,6 +380,7 @@ final class PreviewController: NSObject {
         style.code = n.code
         text.style = style
         text.resolve = { [store] in store.resolve($0) }
+        text.noteID = n.id
     }
 }
 

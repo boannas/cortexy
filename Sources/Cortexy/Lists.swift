@@ -457,7 +457,7 @@ struct LibraryTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(.secondary)
+                Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(Color.cortexyAccentText) // gray all but vanished on light glass
                 Spacer()
                 Text("\(count)").font(.system(size: 16, weight: .semibold)).monospacedDigit()
             }
@@ -875,7 +875,7 @@ struct NoteCard: View {
                 ForEach(Self.pieces(shown, raw: raw), id: \.id) { _, piece in
                     switch piece {
                     case .line(let i, let line):
-                        LineView(line: line, store: store, style: style, highlight: highlight, level: raw.indices.contains(i) ? MD.indentLevel(raw[i]) : 0) { toggle(i) }
+                        LineView(line: line, store: store, style: style, highlight: highlight, level: raw.indices.contains(i) ? MD.indentLevel(raw[i]) : 0, note: note.id) { toggle(i) }
                     case .code(let lang, let lines): CodeBlock(lines: lines, lang: lang, style: style)
                     case .table(let rows): TableBlock(rows: rows, style: style)
                     }
@@ -1042,6 +1042,7 @@ struct LineView: View {
     let style: TextStyle
     var highlight: [String] = []
     var level = 0 // list nesting, as in the editor
+    var note: UUID? // whose line: whether its web images may be fetched
     let toggle: () -> Void
 
     private var size: CGFloat { style.size }
@@ -1078,7 +1079,7 @@ struct LineView: View {
         case .image(let alt, let path):
             let _ = (WebImages.shared.arrivals, Attachments.loads.count) // redraw when an image is ready
             let url = store.resolve(path)
-            if let url, let img = Attachments.imageSoon(at: url) {
+            if let url, let img = Attachments.imageSoon(at: url, note: note) {
                 Image(nsImage: img)
                     .resizable()
                     .scaledToFit()
@@ -1086,7 +1087,7 @@ struct LineView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityLabel(alt.isEmpty ? "Image" : alt)
-            } else if let url, url.isFileURL ? FileManager.default.fileExists(atPath: url.path) : WebImages.shared.coming(url) {
+            } else if let url, url.isFileURL ? FileManager.default.fileExists(atPath: url.path) : WebImages.shared.coming(url, note: note) {
                 RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.primary.opacity(0.05)).frame(height: 90) // on its way
             } else if let url, !url.isFileURL { // web images off, or it couldn't be fetched: a link, as in the editor
                 SwiftUI.Link(destination: url) { Label(alt.isEmpty ? url.host ?? "Image" : alt, systemImage: "photo") }

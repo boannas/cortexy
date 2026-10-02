@@ -585,10 +585,14 @@ private final class StubImages: URLProtocol {
     defer { URLProtocol.unregisterClass(StubImages.self) }
     let url = URL(string: "https://cortexy.test/\(UUID().uuidString).png")!
     let h = EditorHarness(dir: tempDir())
+    let note = UUID()
+    h.tv.noteID = note
     h.tv.load("see ![pic](\(url.absoluteString)) here")
-    #expect(!h.tv.string.contains("\u{FFFC}"))            // not here yet: still the link
-    for _ in 0..<50 where WebImages.shared.image(url) == nil { try await Task.sleep(for: .milliseconds(50)) }
-    #expect(WebImages.shared.image(url) != nil)
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(!h.tv.string.contains("\u{FFFC}") && WebImages.shared.image(url, note: note) == nil) // not fetched: its note hasn't allowed it
+    WebImages.shared.allow(note)                           // the note's Load
+    for _ in 0..<50 where WebImages.shared.image(url, note: note) == nil { try await Task.sleep(for: .milliseconds(50)) }
+    #expect(WebImages.shared.image(url, note: note) != nil)
     #expect(h.tv.string.contains("\u{FFFC}"))             // arrived: shown as an image
     #expect(h.tv.markdown() == "see ![pic](\(url.absoluteString)) here")
 }
@@ -661,16 +665,22 @@ private final class StubImages: URLProtocol {
     let win = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
     win.contentView = host
     win.makeKeyAndOrderFront(nil)
-    func open(_ n: UUID) async throws -> MarkdownTextView {
-        nav.route = .note(Folder.rootID, n)
-        host.layoutSubtreeIfNeeded()
-        try await Task.sleep(for: .milliseconds(450)) // past the page transition
-        return try #require(editorIn(host))
-    }
     func caretInView(_ tv: MarkdownTextView) -> Bool {
         let g = tv.layoutManager!.glyphIndexForCharacter(at: max(0, tv.selectedRange().location - 1))
         let r = tv.layoutManager!.boundingRect(forGlyphRange: NSRange(location: g, length: 1), in: tv.textContainer!)
         return tv.visibleRect.intersects(r.offsetBy(dx: tv.textContainerOrigin.x, dy: tv.textContainerOrigin.y))
+    }
+    /// The note's new editor once it's on screen with its caret shown (the old page fades out meanwhile, and a
+    /// busy machine can take longer than any fixed wait).
+    func open(_ n: UUID) async throws -> MarkdownTextView {
+        let before = editorIn(host)
+        nav.route = .note(Folder.rootID, n)
+        for _ in 0..<80 {
+            host.layoutSubtreeIfNeeded()
+            if let tv = editorIn(host), tv !== before, tv.window != nil, caretInView(tv) { return tv }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        return try #require(editorIn(host))
     }
     var tv = try await open(long)
     #expect(tv.acceptsFirstMouse(for: nil))
@@ -681,7 +691,8 @@ private final class StubImages: URLProtocol {
     let firstUndo = tv.undoManager
     #expect(firstUndo?.canUndo == true)
     nav.route = .home
-    try await Task.sleep(for: .milliseconds(450))
+    // Until the note's page has faded out: come back within that and SwiftUI revives the same editor (its own history still).
+    for _ in 0..<100 where editorIn(host) != nil { host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(50)) }
     tv = try await open(long)
     #expect(tv.selectedRange().location == 20 && caretInView(tv))
     for _ in 0..<100 where tv.undoManager === firstUndo || tv.undoManager?.canUndo != false { // the page transition keeps the old editor around for a moment
@@ -1917,4 +1928,69 @@ private func pngFile(in dir: URL) throws -> String {
     defer { CustomShortcut.all = saved }
     CustomShortcut.all = [t]
     #expect(CustomShortcut.all == [t])
+}
+
+/// Back to a list puts you where you were in it: on the note you left, or the folder you came out of (the list
+/// scrolls to it), rather than at the top.
+@MainActor @Test func backReturnsToWhereYouWereInTheList() {
+    let s = Store(directory: tempDir())
+    let nav = Nav(store: s)
+    let parent = s.addFolder("Parent")
+    let kids = (0..<30).map { s.addFolder("Sub \($0)", in: parent) }
+    let n = s.addNote(to: kids[25], text: "# deep")!
+    nav.route = .folder(parent)
+    nav.route = .folder(kids[25])
+    nav.route = .note(kids[25], n)
+    nav.back()
+    #expect(nav.route == .folder(kids[25]) && nav.selection == n)
+    nav.back()
+    #expect(nav.route == .folder(parent) && nav.selection == kids[25])
+}
+
+/// A new password: every locked note and folder opens with it afterwards and not with the old one; a wrong
+/// current password changes nothing.
+@MainActor @Test func changingTheLockPassword() {
+    Nav.passwordAnswer = .some(nil)
+    defer { Nav.passwordAnswer = nil }
+    let s = Store(directory: tempDir())
+    let nav = Nav(store: s)
+    let solo = s.addNote(to: Folder.rootID, text: "# Bank\nPIN 1234")!
+    let f = s.addFolder("Vault"), inside = s.addNote(to: f, text: "# Deed")!
+    let empty = s.addFolder("Empty")
+    nav.password = "old"
+    nav.lockNote(Folder.rootID, solo)
+    nav.lockFolder(f)
+    nav.lockFolder(empty)
+    nav.lockAll()
+    let before = s.note(Folder.rootID, solo)!.lock
+    #expect(!nav.changePassword(from: "wrong", to: "new") && s.note(Folder.rootID, solo)!.lock == before)
+    #expect(nav.changePassword(from: "old", to: "new"))
+    func opens(_ box: String?, _ pw: String) -> Bool {
+        guard let box, let salt = NoteLock.salt(box) else { return false }
+        return NoteLock.open(box, key: NoteLock.key(pw, salt: salt)) != nil
+    }
+    for box in [s.note(Folder.rootID, solo)!.lock, s.note(f, inside)!.lock, s.folder(empty)!.lockCheck] {
+        #expect(opens(box, "new") && !opens(box, "old"))
+    }
+    nav.password = "new"
+    nav.removeLock(Folder.rootID, solo)
+    #expect(s.note(Folder.rootID, solo)!.text == "# Bank\nPIN 1234")
+}
+
+/// Web images wait for a note's own Load (fetching one tells its server the note was opened), unless Settings
+/// loads them everywhere; a note's Load is remembered.
+@MainActor @Test func webImagesWaitForTheirNote() {
+    let d = UserDefaults.standard
+    let had = d.object(forKey: Prefs.webImages)
+    defer { if let had { d.set(had, forKey: Prefs.webImages) } else { d.removeObject(forKey: Prefs.webImages) } }
+    Prefs.register()
+    d.removeObject(forKey: Prefs.webImages)
+    #expect(Prefs.defaults[Prefs.webImages] as? Bool == false)
+    #expect(MD.webImages("a ![x](https://e.com/p.png) b ![y](attachments/z.png) ![](http://t.co/1.gif)") == ["https://e.com/p.png", "http://t.co/1.gif"])
+    let note = UUID(), other = UUID(), url = URL(string: "https://example.invalid/pixel.png")!
+    #expect(!WebImages.shared.allows(note) && !WebImages.shared.coming(url, note: note))
+    WebImages.shared.allow(note)
+    #expect(WebImages.shared.allows(note) && !WebImages.shared.allows(other))
+    d.set(true, forKey: Prefs.webImages)
+    #expect(WebImages.shared.allows(other))                         // every note, from Settings
 }

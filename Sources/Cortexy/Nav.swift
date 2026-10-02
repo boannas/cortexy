@@ -173,7 +173,8 @@ import UniformTypeIdentifiers
     /// The list you return to has the note you left selected, and scrolled to.
     func back() {
         if !search.isEmpty { search = ""; return }
-        let left = routeNote
+        // The page's list comes back scrolled to (and on) what you left: the note, or the folder you were in.
+        let left: UUID? = if case .folder(let f) = route, !Folder.isBuiltIn(f) { f } else { routeNote }
         while let last = trail.popLast() {
             guard exists(last.route), last.route != route else { continue }
             goingBack = true

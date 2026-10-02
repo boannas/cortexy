@@ -409,6 +409,20 @@ struct EditorView: View {
                 .frame(maxHeight: .infinity)
                 .fitsPanel(nav, height: 320)
             } else {
+            // As Mail does: images from the web wait for a Load, since fetching one tells its server you opened the note.
+            // (`arrivals` is read so a Load redraws this: what's allowed isn't itself observed.)
+            if case let web = MD.webImages(note.text), !web.isEmpty, WebImages.shared.arrivals >= 0, !WebImages.shared.allows(nid) {
+                HStack(spacing: 8) {
+                    Image(systemName: "photo.badge.exclamationmark").foregroundStyle(.secondary)
+                    Text(web.count == 1 ? "An image from the web isn't loaded" : "\(web.count) images from the web aren't loaded")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Button("Load") { WebImages.shared.allow(nid) }.controlSize(.small)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
+                .help("Loading them tells their servers this note was opened. Settings → General can load them in every note.")
+            }
             MarkdownEditor(text: Binding(
                 get: { note.lock != nil ? nav.unlocked[nid] ?? "" : nav.store.note(fid, nid)?.text ?? "" },
                 set: { t in
