@@ -39,7 +39,7 @@ struct RootView: View {
                 }
             }
             content
-                .id(nav.search.isEmpty ? nav.route : .home)
+                .id(nav.page) // each showing anew: one still fading out (left and come straight back to) keeps its own
                 .transition(.opacity) // a scale too re-placed every scroll view in both pages each frame (~4× the cost)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if !nav.marked.isEmpty && !isEditing {
@@ -380,6 +380,14 @@ struct EditorView: View {
     let nav: Nav
     let fid: UUID
     let note: Note
+    @Local private var page: Int // the showing it was made for (see FitsPanel)
+
+    init(nav: Nav, fid: UUID, note: Note) {
+        self.nav = nav
+        self.fid = fid
+        self.note = note
+        _page = Local(wrappedValue: nav.page)
+    }
 
     var body: some View {
         let nid = note.id
@@ -432,7 +440,7 @@ struct EditorView: View {
                 }
             ), style: style, store: nav.store, onLink: { nav.openLink($0) },
                complete: { kind, partial in nav.suggestions(kind, partial, excluding: nid) }, caretKey: nid,
-               onFit: { [screen = nav.screenKey] content, room in if nav.screenKey == screen { nav.panel?.grow(content: content, container: room) } },
+               onFit: { [page] content, room in if nav.page == page { nav.panel?.grow(content: content, container: room) } },
                measureTick: nav.measureTick)
             .background { CardBackground(color: note.color) }
             .padding(.horizontal, 10)

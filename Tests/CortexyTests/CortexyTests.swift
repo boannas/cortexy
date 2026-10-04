@@ -2037,3 +2037,31 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(nav.allTags.contains { $0.name == "guide" } && nav.allTags.contains { $0.name == "คู่มือ" })
     #expect(s.folder(Folder.rootID)!.notes.first?.pinned == true)    // the start note, on top at home
 }
+
+/// In and out of a folder faster than a page fades: the card heads for each page's height once, never back and
+/// forth (the page fading out used to size it too), and coming home from a short folder doesn't overshoot.
+@MainActor @Test func quickHopsSizeTheCardOnce() async throws {
+    await PanelGate.enter()
+    defer { PanelGate.leave() }
+    Prefs.register()
+    let s = Store(testing: tempDir())
+    let small = s.addFolder("Small")
+    _ = s.addNote(to: small, text: "# One")
+    for i in 0..<6 { _ = s.addNote(to: s.addFolder("Folder \(i)"), text: "# Note \(i)\n- [ ] task\nline") }
+    let c = PanelController(store: s)
+    c.holdOpen += 1
+    c.show(byHover: true)
+    defer { c.hide() }
+    try await Task.sleep(for: .milliseconds(900))
+    let home = c.layout.height
+    var heights: [CGFloat] = []
+    func watch(_ ms: Int) async { for _ in 0..<(ms / 15) { if heights.last != c.layout.height { heights.append(c.layout.height) }; try? await Task.sleep(for: .milliseconds(15)) } }
+    for _ in 0..<3 {
+        c.nav.route = .folder(small); await watch(240)
+        c.nav.back(); await watch(240)
+    }
+    await watch(900)
+    #expect(heights.count <= 7, "one height per page change, got \(heights.map { Int($0) })")
+    #expect(heights.allSatisfy { $0 <= home + 1 }, "came home past its height: \(heights.map { Int($0) })")
+    #expect(abs(c.layout.height - home) <= 1)
+}

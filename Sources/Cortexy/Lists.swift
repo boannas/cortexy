@@ -181,7 +181,7 @@ struct FolderView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: Themes.shared.look.density.spacing) {
+                        Rows(count: notes.count + all.count, alignment: .leading, spacing: Themes.shared.look.density.spacing) {
                             if folder.id == Folder.trashID {
                                 PageNote(symbol: "trash", text: "Deleted notes and folders stay here \(keepText). Right-click one to restore it.",
                                          action: ("Empty", { nav.requestDelete(.trash) }))
@@ -358,11 +358,16 @@ struct PreviewOnHover: ViewModifier {
 /// rest. Only while it's the page on show: one fading out has nothing more to say.
 struct FitsPanel: ViewModifier {
     let nav: Nav
-    let screen: String // as it was when this page was made
     let fixed: CGFloat?
     struct Size: Equatable { var content: CGFloat = 0, container: CGFloat = 0 }
-    final class Box { var size = Size() }
-    @Local private var box = Box()
+    final class Box { var size = Size(); let page: Int; init(page: Int) { self.page = page } }
+    @Local private var box: Box
+
+    init(nav: Nav, fixed: CGFloat?) {
+        self.nav = nav
+        self.fixed = fixed
+        _box = Local(wrappedValue: Box(page: nav.page)) // the showing it was made for (kept: the modifier is re-made often)
+    }
 
     func body(content: Content) -> some View {
         Group {
@@ -379,15 +384,30 @@ struct FitsPanel: ViewModifier {
         .onChange(of: nav.measureTick) { report() }
     }
 
-    private func report() { if nav.screenKey == screen { nav.panel?.grow(content: box.size.content, container: box.size.container) } }
+    private func report() { if nav.page == box.page { nav.panel?.grow(content: box.size.content, container: box.size.container) } }
+}
+
+/// A page's rows: all made at once while there are few, so the page knows its exact height before the card
+/// springs to it (a lazy stack guesses at the rows it hasn't made: back home from a short folder, the card
+/// headed for the guess, then shrank back); lazily past that, where making every card up front costs frames.
+struct Rows<Content: View>: View {
+    let count: Int
+    var alignment: HorizontalAlignment = .center
+    var spacing: CGFloat?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if count > 40 { LazyVStack(alignment: alignment, spacing: spacing, content: content) }
+        else { VStack(alignment: alignment, spacing: spacing, content: content) }
+    }
 }
 
 extension View {
     /// The panel fits its height to this list's content (up to the screen's), like Dynamic Island.
-    func fitsPanel(_ nav: Nav) -> some View { modifier(FitsPanel(nav: nav, screen: nav.screenKey, fixed: nil)) }
+    func fitsPanel(_ nav: Nav) -> some View { modifier(FitsPanel(nav: nav, fixed: nil)) }
 
     /// A page with nothing to scroll (an empty one, a lock): the panel gives it `height`.
-    func fitsPanel(_ nav: Nav, height: CGFloat) -> some View { modifier(FitsPanel(nav: nav, screen: nav.screenKey, fixed: height)) }
+    func fitsPanel(_ nav: Nav, height: CGFloat) -> some View { modifier(FitsPanel(nav: nav, fixed: height)) }
 
     func previewOnHover(_ item: PreviewModel.Item) -> some View { modifier(PreviewOnHover(item: item)) }
 }
@@ -612,7 +632,7 @@ struct UpcomingView: View {
                                    description: Text("Give a task a date — “- [ ] Call Ann 📅 2026-10-05 14:30”, or the calendar button under the editor — and it shows here and reminds you.")).fitsPanel(nav, height: 320)
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
+                Rows(count: tasks.count, alignment: .leading, spacing: 2) {
                     PageNote(symbol: "calendar", text: "Tasks with a date, from every note. Reminders come as notifications (Settings → General).")
                     ForEach(groups, id: \.0) { name, items in
                         SectionHeader(name).padding(.top, 6)
@@ -667,7 +687,7 @@ struct ArchiveView: View {
                                    description: Text("Archived notes leave their folder and search, and wait here.")).fitsPanel(nav, height: 300)
         } else {
             ScrollView {
-                LazyVStack(spacing: Themes.shared.look.density.spacing) {
+                Rows(count: notes.count, spacing: Themes.shared.look.density.spacing) {
                     PageNote(symbol: "archivebox", text: "Archived notes stay out of their folders and search. Right-click one to unarchive it.")
                     ForEach(notes, id: \.1.id) { f, n in
                         NoteCard(note: n, store: nav.store, folderName: nav.store.path(f.id),
@@ -1056,10 +1076,10 @@ struct LineView: View {
             }
             .padding(.leading, indent)
         case .bullet(let s):
-            HStack(alignment: .firstTextBaseline, spacing: 6) { Text(["•", "◦", "▪"][level % 3]).foregroundStyle(.secondary); inline(s) }
+            HStack(alignment: .firstTextBaseline, spacing: 6) { Text(["•", "◦", "▪"][level % 3]).bold().foregroundStyle(Color.cortexyAccent); inline(s) }
                 .padding(.leading, indent)
         case .numbered(let m, let s):
-            HStack(alignment: .firstTextBaseline, spacing: 4) { Text(m).foregroundStyle(.secondary).monospacedDigit(); inline(s) }
+            HStack(alignment: .firstTextBaseline, spacing: 4) { Text(m).foregroundStyle(Color.cortexyAccent).monospacedDigit(); inline(s) }
                 .padding(.leading, indent)
         case .quote(let s):
             inline(s).foregroundStyle(.secondary).padding(.leading, 8)
@@ -1158,6 +1178,7 @@ struct LineView: View {
         rework(MD.dueRegex) { a, whole, _ in // due dates in their urgency's color
             guard let d = MD.due(String(a[whole].characters)) else { return }
             a[whole].foregroundColor = Color(nsColor: Due.of(d.date, hasTime: d.hasTime, done: done).color)
+            a[whole].font = style.swiftUI(size - 1, weight: .medium)
         }
         for term in highlight where !term.isEmpty { each(term) { a, r in a[r].backgroundColor = Color.yellow.opacity(0.45) } }
         return Text(a)

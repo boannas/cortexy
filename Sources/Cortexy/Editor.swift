@@ -4,6 +4,8 @@ import SwiftUI
 extension NSAttributedString.Key {
     /// A list marker the text view draws itself: "task", "done", or "bullet0"… (the nesting level, for ● ○ ■).
     static let cxMarker = NSAttributedString.Key("cxMarker")
+    /// A due date: the text view draws a soft pill of this color behind it.
+    static let cxPill = NSAttributedString.Key("cxPill")
     /// On an attachment character: the Markdown it stands for, e.g. `![](attachments/x.png)`.
     static let cxSource = NSAttributedString.Key("cxSource")
     /// On an attachment character: what double-clicking opens.
@@ -218,7 +220,7 @@ enum Styler {
                 let symbol = (line as NSString).substring(with: NSRange(location: lead, length: m.range.length - lead))
                 indentList(storage, line: line, range: range, st, marker: (symbol as NSString).size(withAttributes: [.font: st.body]).width)
                 if line.trimmingCharacters(in: .whitespaces).first?.isNumber == true {
-                    storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: marker)
+                    storage.addAttribute(.foregroundColor, value: st.checkColor, range: marker)
                 } else {
                     let dash = NSRange(location: marker.location + lead, length: 1)
                     storage.addAttributes([.foregroundColor: NSColor.clear, .cxMarker: "bullet\(MD.indentLevel(line) % 3)"], range: dash)
@@ -427,8 +429,17 @@ enum Styler {
         each(MD.dueRegex) { m, at in // due dates, colored by how pressing they are
             guard !inCode(m.range), let d = MD.due((line as NSString).substring(with: m.range)) else { return }
             let done = MD.match(MD.taskRegex, line).map { (line as NSString).substring(with: $0.range(at: 2)) != " " } ?? false
-            s.addAttributes([.foregroundColor: Due.of(d.date, hasTime: d.hasTime, done: done).color,
-                             .font: st.font(st.size - 1, weight: .medium)], range: at(m.range))
+            let due = Due.of(d.date, hasTime: d.hasTime, done: done)
+            s.addAttributes([.foregroundColor: due.color, .font: st.font(st.size - 1, weight: .medium)], range: at(m.range))
+            if due != .done {
+                let r = at(m.range)
+                s.addAttribute(.cxPill, value: due.color, range: r)
+                // Room for the pill's ends: past the space before it, and after its last digit.
+                s.addAttribute(.kern, value: 4, range: NSRange(location: NSMaxRange(r) - 1, length: 1))
+                if m.range.location > 0, (line as NSString).character(at: m.range.location - 1) == 32 {
+                    s.addAttribute(.kern, value: 4, range: NSRange(location: r.location - 1, length: 1))
+                }
+            }
         }
         each(mark) { m, at in
             guard !inCode(m.range) else { return }
@@ -808,14 +819,39 @@ final class MarkdownTextView: NSTextView {
             let bullet = m.kind.hasPrefix("bullet")
             let level = Int(m.kind.dropFirst(6)) ?? 0
             let name = bullet ? ["circle.fill", "circle", "square.fill"][level % 3] : done ? "checkmark.square.fill" : "square"
-            let size: CGFloat = bullet ? (level == 1 ? 6 : 5) : style.size + 1
-            let colors: [NSColor] = done ? [.white, style.checkColor] : [.secondaryLabelColor] // check, box
+            let size: CGFloat = bullet ? (level == 1 ? 7 : 6) : style.size + 1
+            let colors: [NSColor] = done ? [.white, style.checkColor] : bullet ? [style.checkColor] : [.secondaryLabelColor] // check, box
             guard let img = markerImage(name, size: size, colors: colors, key: "\(name)|\(size)|\(look)") else { continue }
             let s = img.size
             // Symbol images carry padding below the glyph; center the visible glyph (its alignment rect), not the image.
             let glyphMid = img.alignmentRect.midY // bottom-up image coordinates
             let r = NSRect(x: m.rect.minX + (bullet ? 1 : 0), y: m.rect.midY - (s.height - glyphMid), width: s.width, height: s.height)
             img.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+    }
+
+    /// Due dates sit on a soft pill of their color (gray text alone was easy to miss), under the selection.
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let lm = layoutManager, let tc = textContainer, let storage = textStorage, storage.length > 0 else { return }
+        let chars = lm.characterRange(forGlyphRange: lm.glyphRange(forBoundingRect: rect, in: tc), actualGlyphRange: nil)
+        storage.enumerateAttribute(.cxPill, in: chars) { value, range, _ in
+            guard let color = value as? NSColor, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
+            let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let text = storage.string as NSString
+            // One pill per line it's on (a date and time can wrap), around the letters: from the line's baseline,
+            // as a line's own rect has its spacing in it, and without the space it wrapped at.
+            lm.enumerateLineFragments(forGlyphRange: glyphs) { frag, _, _, line, _ in
+                var part = lm.characterRange(forGlyphRange: NSIntersectionRange(line, glyphs), actualGlyphRange: nil)
+                while part.length > 0, text.character(at: NSMaxRange(part) - 1) == 32 { part.length -= 1 }
+                guard part.length > 0 else { return }
+                let g = lm.glyphRange(forCharacterRange: part, actualCharacterRange: nil)
+                let r = lm.boundingRect(forGlyphRange: g, in: tc), base = frag.minY + lm.location(forGlyphAt: g.location).y
+                let box = NSRect(x: r.minX - 4, y: base - font.ascender - 1, width: r.width + 8, height: font.ascender - font.descender + 2)
+                    .offsetBy(dx: self.textContainerOrigin.x, dy: self.textContainerOrigin.y)
+                color.withAlphaComponent(0.16).setFill()
+                NSBezierPath(roundedRect: box, xRadius: box.height / 2, yRadius: box.height / 2).fill()
+            }
         }
     }
 
@@ -1633,7 +1669,7 @@ extension Due {
         switch self {
         case .overdue: .systemRed
         case .today: .systemOrange
-        case .later: .secondaryLabelColor
+        case .later: Themes.shared.current.accentNSColor ?? .controlAccentColor // gray was easy to miss
         case .done: .tertiaryLabelColor
         }
     }

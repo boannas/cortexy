@@ -120,7 +120,7 @@ enum Welcome {
 
         ## Dates
         - Add `📅 2026-10-05` or `@2026-10-05` (a time is optional), or press the calendar button under the editor
-        - Red is overdue, orange is today
+        - Red is overdue, orange is today, later ones are in the theme's color
         - **Upcoming** on the home page lists every dated task; pointing at one marks the others from the same note
         - Reminders come as notifications (allow them when asked; Settings → General sets the hour)
 
@@ -300,7 +300,7 @@ enum Welcome {
         ## วันที่
         - เติม `📅 2026-10-05` หรือ `@2026-10-05` (ใส่เวลาหรือไม่ก็ได้) หรือกดปุ่มปฏิทินใต้ editor
         - ใช้ปี พ.ศ. หรือเลขไทยก็ได้ เช่น `📅 ๒๕๖๙-๑๐-๐๕`
-        - แดง = เลยกำหนด ส้ม = วันนี้
+        - แดง = เลยกำหนด ส้ม = วันนี้ สีของธีม = วันถัดไป
         - หน้า **Upcoming** ที่หน้าแรกรวมงานที่มีวันทั้งหมด ชี้ที่งานไหน งานอื่นจากโน้ตเดียวกันจะขึ้นสีด้วย
         - แจ้งเตือนผ่าน notification ของ macOS (กดอนุญาตตอนถาม ตั้งเวลาได้ใน Settings → General)
 

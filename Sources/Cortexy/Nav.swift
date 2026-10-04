@@ -16,6 +16,7 @@ import UniformTypeIdentifiers
     var route: Route = .home {
         didSet {
             guard oldValue != route else { return }
+            if search.isEmpty { page += 1 }
             if !goingBack { trail = Array((trail + [(oldValue, search.isEmpty ? clearedSearch ?? "" : search)]).suffix(50)) }
             clearedSearch = nil // it belonged to this step only
             // Leaving a note (not just following it to another folder): update links to it, drop it if empty.
@@ -51,6 +52,7 @@ import UniformTypeIdentifiers
     var search = "" {
         didSet {
             guard oldValue != search else { return }
+            if oldValue.isEmpty != search.isEmpty { page += 1 }
             selection = nil
             hintIndex = nil
             marked = [] // marks on hits no longer shown would be deleted unseen
@@ -196,8 +198,9 @@ import UniformTypeIdentifiers
 
     private var routeNote: UUID? { if case .note(_, let n) = route { n } else { nil } }
 
-    /// Which page is showing (search results count as one), so a page fading out can't size the panel.
-    var screenKey: String { search.isEmpty ? "\(route)" : "search" }
+    /// Which page is on show, one number per showing (search results count as one): a page still fading out,
+    /// even the same folder's left and come straight back to, can't size the panel.
+    @ObservationIgnored private(set) var page = 0
     /// Bumped when the panel's card comes to rest: pages say again how tall they are.
     var measureTick = 0
     /// The side panel showing this Nav (none for one only used in a note window or a test).
