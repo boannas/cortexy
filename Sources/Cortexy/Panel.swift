@@ -101,6 +101,7 @@ enum Prefs {
     static let panelOpacity = "panelOpacity"           // 1 = solid; lower lets what's behind show through
     static let hideFromCapture = "hideFromCapture"     // screen sharing, recordings and screenshots leave Cortexy's windows out
     static let quickLook = "quickLook"                 // double-clicking an attachment previews it (else opens it in its app)
+    static let linkPreviews = "linkPreviews"           // pasted links get their page's title; resting on one shows the page's card
 
     static var keptOpen: Bool { UserDefaults.standard.bool(forKey: keepOpen) }
     /// For every window of ours: none while hidden from capture.
@@ -111,7 +112,7 @@ enum Prefs {
         hideDelay: 0.35, previewDelay: 0.45, previewHideDelay: 0.2, previewWidth: 0.0, undoSeconds: 5.0, showTags: true,
         codeTab: 4, trashDays: 30, backupsKept: 14,
         templatesFolder: "Templates", dailyFolder: "Daily", dailyTemplate: "", dateFormat: "yyyy-MM-dd", todayKey: "", systemCalendar: false, versionsKept: 50, webImages: false, reminders: true, remindAt: 9, touchID: false, lockOnHide: true,
-        keepOpen: false, panelOpacity: 1.0, hideFromCapture: false, quickLook: true,
+        keepOpen: false, panelOpacity: 1.0, hideFromCapture: false, quickLook: true, linkPreviews: true,
         toggleKey: HotKeySpec(keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), display: "⌃⌥N").encoded,
         newNoteKey: "",
     ]
@@ -241,6 +242,28 @@ final class PanelController: NSObject {
     static func custom(for e: NSEvent) -> CustomShortcut? {
         guard let spec = HotKeySpec(event: e) else { return nil }
         return CustomShortcut.all.first { !$0.anywhere && $0.matches(spec) }
+    }
+
+    // MARK: Links in the editor
+
+    private var linkItem: PreviewModel.Item?
+
+    /// The pointer rests on a link in the panel's editor (nil: it left): a `[[note]]` previews the note, a web
+    /// link its page's card. `rect` is the link in window coordinates.
+    func hoverLink(_ url: URL?, rect: NSRect, in tv: MarkdownTextView) {
+        guard tv.window === panel, let content = panel.contentView else { return }
+        if let old = linkItem { preview.hover(old, inside: false, rect: .zero); linkItem = nil }
+        guard let url else { return }
+        let item: PreviewModel.Item
+        if url.scheme == "cortexy", url.host == "open",
+           let title = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "title" })?.value {
+            guard let (_, n) = nav.resolve(title: title) ?? nav.resolve(title: MD.splitLink(title).title) else { return }
+            item = .note(n.id)
+        } else if ["http", "https"].contains(url.scheme ?? ""), LinkPreviews.enabled {
+            item = .web(url)
+        } else { return }
+        linkItem = item
+        preview.hover(item, inside: true, rect: CGRect(x: rect.minX, y: content.bounds.height - rect.maxY, width: rect.width, height: rect.height))
     }
 
     // MARK: Show / hide
@@ -701,6 +724,9 @@ final class PanelController: NSObject {
         if code == kVK_Delete, mods == .command, !inText {
             nav.deleteSelection()
             return true
+        }
+        if mods == [.command, .option, .shift], code == kVK_ANSI_V, isEditingNote, inText { // as typed: no link titles, no Markdown from HTML
+            return NSApp.sendAction(#selector(NSTextView.pasteAsPlainText(_:)), to: nil, from: panel)
         }
         if mods == [.command, .option], code == kVK_UpArrow || code == kVK_DownArrow, isEditingNote, inText {
             return NSApp.sendAction(code == kVK_UpArrow ? #selector(MarkdownTextView.cxMoveUp(_:)) : #selector(MarkdownTextView.cxMoveDown(_:)), to: nil, from: panel)

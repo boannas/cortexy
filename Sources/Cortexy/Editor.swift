@@ -966,6 +966,51 @@ final class MarkdownTextView: NSTextView {
         super.mouseDown(with: event)
     }
 
+    // MARK: Resting on a link previews it
+
+    private var hoverArea: NSTrackingArea?
+    private var hoveredLink: NSRange?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let a = hoverArea { removeTrackingArea(a) }
+        guard !previewing else { return }
+        let a = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(a)
+        hoverArea = a
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        guard !previewing, let lm = layoutManager, let tc = textContainer, let st = textStorage, st.length > 0 else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        let inContainer = NSPoint(x: p.x - textContainerOrigin.x, y: p.y - textContainerOrigin.y)
+        let g = lm.glyphIndex(for: inContainer, in: tc)
+        var r = NSRange()
+        let i = lm.characterIndexForGlyph(at: g)
+        guard lm.boundingRect(forGlyphRange: NSRange(location: g, length: 1), in: tc).contains(inContainer), i < st.length,
+              let url = st.attribute(.link, at: i, effectiveRange: &r) as? URL else { return leaveLink() }
+        guard r != hoveredLink else { return }
+        leaveLink()
+        hoveredLink = r
+        // Where it is in the window: its first line's part, as a link can wrap.
+        var box = lm.boundingRect(forGlyphRange: lm.glyphRange(forCharacterRange: r, actualCharacterRange: nil), in: tc)
+        lm.enumerateLineFragments(forGlyphRange: NSRange(location: g, length: 1)) { _, used, _, _, _ in box = box.intersection(used) }
+        let inWindow = convert(box.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y), to: nil)
+        PanelController.shared?.hoverLink(url, rect: inWindow, in: self)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        leaveLink()
+    }
+
+    private func leaveLink() {
+        guard hoveredLink != nil else { return }
+        hoveredLink = nil
+        PanelController.shared?.hoverLink(nil, rect: .zero, in: self)
+    }
+
     private func copyToPasteboard(_ s: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(s, forType: .string)
@@ -1028,11 +1073,27 @@ final class MarkdownTextView: NSTextView {
 
     // MARK: Clipboard and drops speak Markdown, not attachment characters
 
+    /// Marks what Cortexy copied: pasted back into a note it's the Markdown, not the HTML made from it.
+    static let markdownType = NSPasteboard.PasteboardType("com.cortexy.markdown")
+
     override func copy(_ sender: Any?) {
         let r = selectedRange()
         guard r.length > 0 else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(markdown(in: r), forType: .string)
+        Self.write(markdown(in: r), to: NSPasteboard.general)
+    }
+
+    /// Markdown as text, and as HTML and RTF so Mail, Notes, Pages and Docs keep its formatting.
+    static func write(_ md: String, to pb: NSPasteboard) {
+        pb.clearContents()
+        pb.setString(md, forType: .string)
+        pb.setString(md, forType: markdownType)
+        let html = MD.html(md)
+        pb.setString(html, forType: .html)
+        if let rich = try? NSAttributedString(data: Data(html.utf8), options: [.documentType: NSAttributedString.DocumentType.html,
+                                                                               .characterEncoding: String.Encoding.utf8.rawValue], documentAttributes: nil),
+           let rtf = rich.rtf(from: NSRange(location: 0, length: rich.length)) {
+            pb.setData(rtf, forType: .rtf)
+        }
     }
 
     override func cut(_ sender: Any?) {
@@ -1045,8 +1106,47 @@ final class MarkdownTextView: NSTextView {
         return pboard.setString(markdown(in: selectedRange()), forType: .string)
     }
 
-    override func paste(_ sender: Any?) {
-        if !insertFiles(from: NSPasteboard.general) { super.paste(sender) }
+    override func paste(_ sender: Any?) { paste(from: NSPasteboard.general) }
+
+    /// Files become attachments; a link pasted over words links them (and a bare one gets its page's title);
+    /// rich text from elsewhere comes as Markdown; pasted code goes into a code block. In code, all of it is plain.
+    func paste(from pb: NSPasteboard) {
+        if insertFiles(from: pb) { return }
+        let sel = selectedRange(), ns = string as NSString
+        let lineStart = ns.paragraphRange(for: NSRange(location: min(sel.location, ns.length), length: 0)).location
+        guard !style.code, Styler.fences(string, before: lineStart) % 2 == 0, let text = pb.string(forType: .string) else { return plainPaste(pb) }
+        if let url = MD.singleURL(text) { return pasteLink(url) }
+        if pb.availableType(from: [Self.markdownType]) == nil, let html = pb.string(forType: .html), let md = MD.markdown(fromHTML: html), !md.isEmpty {
+            return insertText(md, replacementRange: sel)
+        }
+        if MD.looksLikeCode(text) { return insertBlock("```\n" + text.trimmingCharacters(in: .newlines) + "\n```") }
+        plainPaste(pb)
+    }
+
+    private func plainPaste(_ pb: NSPasteboard) {
+        guard let text = pb.string(forType: .string) else { return super.paste(nil) }
+        insertText(text, replacementRange: selectedRange())
+    }
+
+    private func pasteLink(_ url: URL) {
+        let sel = selectedRange(), ns = string as NSString
+        let picked = sel.length > 0 ? ns.substring(with: sel) : ""
+        if !picked.isEmpty, !picked.contains("\n"), MD.singleURL(picked) == nil { // words selected: they become the link
+            return insertText("[\(MD.escape(picked))](\(url.absoluteString))", replacementRange: sel)
+        }
+        let link = url.absoluteString
+        insertText(link, replacementRange: sel)
+        guard LinkPreviews.enabled else { return }
+        let at = NSRange(location: sel.location, length: (link as NSString).length)
+        Task { @MainActor [weak self] in
+            guard let info = await LinkPreviews.shared.info(url), !info.title.isEmpty, let self else { return }
+            let now = string as NSString
+            guard NSMaxRange(at) <= now.length, now.substring(with: at) == link else { return } // edited meanwhile: leave it
+            let title = String(info.title.prefix(120))
+            let new = "[\(MD.escape(title))](\(link))", caret = selectedRange()
+            let delta = (new as NSString).length - at.length
+            replace(at, with: new, select: caret.location >= NSMaxRange(at) ? NSRange(location: caret.location + delta, length: caret.length) : caret)
+        }
     }
 
     override var acceptableDragTypes: [NSPasteboard.PasteboardType] { super.acceptableDragTypes + [.fileURL, .png, .tiff] }

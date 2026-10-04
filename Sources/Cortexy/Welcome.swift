@@ -109,6 +109,12 @@ enum Welcome {
         - **⌘-click** a code block, heading, list item or quote copies it; **⌥⌘-click** copies a link
         - Double-click an attached file or image to preview it with Quick Look
 
+        ## Pasting
+        - Paste a link over selected words to link them; a bare link gets its page's title
+        - Text copied from a web page, Notes, Docs or Word arrives as Markdown; pasted code goes into a code block; **⌥⇧⌘V** pastes plain
+        - Copy from a note and paste into Mail or Pages: the formatting comes along
+        - Rest the pointer on a `[[link]]` to read that note, or on a web link to see its page's card
+
         ---
         The bar under the editor has all of this; its **More Formatting** button adds headings, a code block, a divider, images and screenshots.
 
@@ -298,6 +304,12 @@ enum Welcome {
         - **⌥⌘↑ / ⌥⌘↓** ย้ายบรรทัด (หรือบรรทัดที่เลือก) ขึ้นลง
         - **⌘-click** ที่ code block หัวข้อ รายการ หรือ quote เพื่อคัดลอก · **⌥⌘-click** คัดลอกลิงก์
         - ดับเบิลคลิกไฟล์แนบหรือรูปเพื่อดูด้วย Quick Look
+
+        ## การวาง
+        - วางลิงก์ทับคำที่เลือกไว้ คำนั้นจะกลายเป็นลิงก์ ถ้าวางลิงก์เปล่าๆ จะได้ชื่อหน้าเว็บมาเป็นข้อความ
+        - ข้อความที่คัดลอกจากเว็บ, Notes, Docs หรือ Word กลายเป็น Markdown · วางโค้ดจะอยู่ใน code block ให้ · **⌥⇧⌘V** วางแบบข้อความล้วน
+        - คัดลอกจากโน้ตไปวางใน Mail หรือ Pages ได้รูปแบบตัวอักษรไปด้วย
+        - พักเมาส์บน `[[ลิงก์]]` เพื่ออ่านโน้ตนั้น หรือบนลิงก์เว็บเพื่อดูการ์ดของหน้าเว็บ
 
         ---
         แถบใต้ editor มีทุกอย่างนี้ ปุ่ม **More Formatting** มีหัวข้อ code block เส้นคั่น รูป และภาพหน้าจอเพิ่ม

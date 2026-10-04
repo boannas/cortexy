@@ -7,6 +7,7 @@ import SwiftUI
     enum Item: Hashable {
         case folder(UUID), archive, upcoming, note(UUID)
         case version(UUID, Int) // a note's kept version, by its place in the history
+        case web(URL)           // a link in a note: its page's title, summary and picture
 
         var isText: Bool { switch self { case .note, .version: true; default: false } }
     }
@@ -234,6 +235,7 @@ final class PreviewController: NSObject {
         case .archive: nav.route = .archive
         case .upcoming: nav.route = .upcoming
         case .note(let id), .version(let id, _): if let f = nav.store.folderOf(id) { nav.route = .note(f.id, id) }
+        case .web(let url): NSWorkspace.shared.open(url); return
         }
         PanelController.shared?.panel.makeKeyAndOrderFront(nil)
     }
@@ -258,6 +260,7 @@ final class PreviewController: NSObject {
         case .folder(let f): nav.store.folder(f)?.name ?? ""
         case .note(let id): nav.store.folderOf(id).flatMap { nav.store.note($0.id, id)?.title } ?? ""
         case .version(_, _): "Earlier version"
+        case .web(let url): url.host ?? url.absoluteString
         }
     }
 
@@ -285,7 +288,7 @@ final class PreviewController: NSObject {
             return Row(id: n.id.uuidString, item: .note(n.id), title: n.title, detail: detail)
         }
         switch c {
-        case .note, .version: return []
+        case .note, .version, .web: return []
         case .archive: return nav.archivedNotes.map { note($0.1) }
         case .upcoming: // each task with a date; resting on one previews its note
             return nav.dueTasks.filter { !$0.done }.map { t in
@@ -429,6 +432,7 @@ struct PreviewBrowser: View {
                 if let item = path.last {
                     Group {
                         if item.isText { NotePage(controller: controller, item: item) }
+                        else if case .web(let url) = item { WebPage(controller: controller, url: url) }
                         else { FolderPage(controller: controller, index: path.count - 1, item: item) }
                     }
                     .id(path)
@@ -512,6 +516,39 @@ struct PreviewRowView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint(row.isFolder ? "Looks inside" : "Opens the note")
+    }
+}
+
+/// A web link's page: its picture, title and summary (asked for once; nothing is shown from the page itself).
+/// Click to open it in the browser.
+struct WebPage: View {
+    let controller: PreviewController
+    let url: URL
+
+    var body: some View {
+        let info = LinkPreviews.shared.found[url]
+        VStack(alignment: .leading, spacing: 10) {
+            if let image = info?.image {
+                AsyncImage(url: image) { $0.resizable().scaledToFill() } placeholder: { Color.primary.opacity(0.05) }
+                    .frame(maxWidth: .infinity).frame(height: 150).clipped()
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(info?.title.isEmpty == false ? info!.title : url.host ?? url.absoluteString)
+                    .font(.system(size: 15, weight: .semibold)).lineLimit(3)
+                if let s = info?.summary, !s.isEmpty { Text(s).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(6) }
+                if info == nil { ProgressView().controlSize(.small) }
+                Spacer(minLength: 0)
+                Label(url.host ?? url.absoluteString, systemImage: "safari").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, info?.image == nil ? 14 : 0)
+            .padding(.bottom, 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .onTapGesture { controller.openInPanel(.web(url)) }
+        .help(url.absoluteString)
+        .task(id: url) { _ = await LinkPreviews.shared.info(url) }
     }
 }
 

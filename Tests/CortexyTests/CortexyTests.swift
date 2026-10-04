@@ -1641,6 +1641,115 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(!c.shown)
 }
 
+@Test func pastedLinksAndCode() {
+    #expect(MD.singleURL("  https://example.com/a?utm_source=x&id=3&fbclid=y \n")?.absoluteString == "https://example.com/a?id=3")
+    #expect(MD.singleURL("https://youtu.be/abc?si=track")?.absoluteString == "https://youtu.be/abc")
+    #expect(MD.singleURL("see https://x.y") == nil && MD.singleURL("ftp://x.y") == nil && MD.singleURL("example.com") == nil)
+    #expect(MD.looksLikeCode("func a() {\n    let x = 1\n    return x\n}"))
+    #expect(!MD.looksLikeCode("วันนี้ไปตลาด (เช้า)\nซื้อผัก\nกลับบ้าน"))
+    #expect(!MD.looksLikeCode("- a()\n- b()\n- c()"))
+}
+
+@Test func richTextBecomesMarkdown() {
+    let html = """
+    <html><body><h2>Plan <b>B</b></h2><p>Some <strong>bold</strong>, <em>it</em> and <a href="https://x.y/p">a link</a>.</p>
+    <ul><li>one<ul><li>nested</li></ul></li><li><input type="checkbox" checked>done</li></ul>
+    <ol><li>first</li><li>second</li></ol><blockquote><p>quoted</p></blockquote><pre><code>let a = 1
+      indented</code></pre>
+    <table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2|3</td></tr></table><hr></body></html>
+    """
+    #expect(MD.markdown(fromHTML: html) == """
+    ## Plan B
+
+    Some **bold**, *it* and [a link](https://x.y/p).
+
+    - one
+      - nested
+    - [x] done
+
+    1. first
+    2. second
+
+    > quoted
+
+    ```
+    let a = 1
+      indented
+    ```
+
+    | A | B |
+    | --- | --- |
+    | 1 | 2\\|3 |
+
+    ---
+    """)
+    // Google Docs wraps everything in a <b> that isn't bold; its bold is a span's style.
+    #expect(MD.markdown(fromHTML: #"<b style="font-weight:normal;" id="docs-internal-guid-1"><p><span style="font-weight:700">Hi</span> there</p></b>"#) == "**Hi** there")
+    // Apple Notes: a div per line.
+    #expect(MD.markdown(fromHTML: "<div><b>Title</b></div><div>line two</div>") == "**Title**\nline two")
+    // A code editor's colored spans have nothing to convert: pasted plain.
+    #expect(MD.markdown(fromHTML: #"<div style="color:#333"><span style="color:red">let</span> x</div>"#) == nil)
+}
+
+@Test func markdownBecomesHTML() {
+    let h = MD.html("# T & <x>\n- a\n  - **b**\n- [x] c\n1. n\n> q\n```\n<code>\n```\n| A | B |\n|---|---|\n| 1 | 2 |\nsee [[Note|it]] and `a<b`")
+    #expect(h.contains("<h1>T &amp; &lt;x&gt;</h1>"))
+    #expect(h.contains("<ul><li>a</li><ul><li><b>b</b></li></ul><li>☑ c</li></ul><ol><li>n</li></ol>"))
+    #expect(h.contains("<blockquote>q</blockquote><pre><code>&lt;code&gt;</code></pre>"))
+    #expect(h.contains("<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"))
+    #expect(h.contains("<p>see it and <code>a&lt;b</code></p>"))
+}
+
+@Test func linkPagesAreRead() {
+    let page = #"<html><head><title>Plain &amp; Simple</title><meta content="Big &#x2014; day" property="og:title"><meta name="description" content="What it&#39;s about"><meta property="og:image" content="/pic.png"></head>"#
+    let info = LinkPreviews.parse(page, base: URL(string: "https://x.y/a/b")!)
+    #expect(info == LinkPreviews.Info(title: "Big — day", summary: "What it's about", image: URL(string: "https://x.y/pic.png")))
+    #expect(LinkPreviews.parse("<title>\n  Only  title </title>", base: URL(string: "https://x.y")!).title == "Only title")
+}
+
+/// Pasting into a note: a link over selected words links them, a bare link gets its page's title, rich text
+/// arrives as Markdown, code goes in a block — and Cortexy's own copy pastes back as the same Markdown.
+@MainActor @Test func pastingIntoANote() async throws {
+    let h = EditorHarness(dir: tempDir())
+    let pb = NSPasteboard(name: .init("cortexy-test-\(UUID().uuidString)"))
+    defer { pb.releaseGlobally() }
+    func paste(_ s: String, html: String? = nil) {
+        pb.clearContents()
+        pb.setString(s, forType: .string)
+        if let html { pb.setString(html, forType: .html) }
+        h.tv.paste(from: pb)
+    }
+    h.tv.load("read this")
+    h.tv.setSelectedRange(NSRange(location: 5, length: 4))
+    paste("https://x.y/doc?utm_medium=a")
+    #expect(h.tv.markdown() == "read [this](https://x.y/doc)")
+
+    h.tv.load("code:\n")
+    h.tv.setSelectedRange(NSRange(location: 6, length: 0))
+    paste("if a {\n    b()\n}")
+    #expect(h.tv.markdown() == "code:\n```\nif a {\n    b()\n}\n```")
+
+    h.tv.load("")
+    paste("Hi bold", html: "<p>Hi <b>bold</b></p>")
+    #expect(h.tv.markdown() == "Hi **bold**")
+
+    Cortexy.MarkdownTextView.write("- **x**", to: pb) // copied from a note: HTML and RTF ride along, but it pastes as itself
+    #expect(pb.string(forType: .html)?.contains("<b>x</b>") == true && pb.data(forType: .rtf) != nil)
+    h.tv.load("")
+    h.tv.paste(from: pb)
+    #expect(h.tv.markdown() == "- **x**")
+
+    let old = LinkPreviews.shared.load
+    defer { LinkPreviews.shared.load = old }
+    LinkPreviews.shared.load = { url in (Data("<title>The [Page]</title>".utf8), URLResponse(url: url, mimeType: "text/html", expectedContentLength: -1, textEncodingName: "utf-8")) }
+    h.tv.load("x ")
+    h.tv.setSelectedRange(NSRange(location: 2, length: 0))
+    paste("https://example.org/t-\(UUID().uuidString)")
+    for _ in 0..<40 where !h.tv.markdown().hasPrefix("x [") { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(h.tv.markdown().hasPrefix("x [The \\[Page\\]](https://example.org/t-"))
+    #expect(h.tv.selectedRange().location == (h.tv.string as NSString).length) // the caret stays after it
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {
