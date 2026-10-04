@@ -143,7 +143,18 @@ enum Welcome {
         - Add `📅 2026-10-05` or `@2026-10-05` (a time is optional), or press the calendar button under the editor
         - Red is overdue, orange is today, later ones are in the theme's color
         - **Upcoming** on the home page lists every dated task; pointing at one marks the others from the same note
-        - Reminders come as notifications (allow them when asked; Settings → General sets the hour)
+        - Reminders come as notifications (allow them when asked; Settings → General sets the hour); each has snooze buttons, and clicking one opens the note at the task
+
+        ## More about tasks
+        - [/] `- [/]` is in progress, `- [-]` is cancelled (type `/` for **Mark In Progress** or **Mark Cancelled**)
+        - [ ] Add `🔁 every week` (or `every 2 days`, `every month`, `ทุกเดือน`): ticking it adds the next one with its new date
+
+        ## Sums
+        rent = 12,000
+        food = 4,500
+        rent + food =
+
+        A line ending in `=` shows its result; `name = …` lines set names for later.
 
         The smart folder *To Do* on the home page shows every note with something left to do.
         """,
@@ -356,7 +367,18 @@ enum Welcome {
         - ใช้ปี พ.ศ. หรือเลขไทยก็ได้ เช่น `📅 ๒๕๖๙-๑๐-๐๕`
         - แดง = เลยกำหนด ส้ม = วันนี้ สีของธีม = วันถัดไป
         - หน้า **Upcoming** ที่หน้าแรกรวมงานที่มีวันทั้งหมด ชี้ที่งานไหน งานอื่นจากโน้ตเดียวกันจะขึ้นสีด้วย
-        - แจ้งเตือนผ่าน notification ของ macOS (กดอนุญาตตอนถาม ตั้งเวลาได้ใน Settings → General)
+        - แจ้งเตือนผ่าน notification ของ macOS (กดอนุญาตตอนถาม ตั้งเวลาได้ใน Settings → General) มีปุ่มเลื่อนเตือน และคลิกแล้วเปิดโน้ตที่บรรทัดของงาน
+
+        ## งานเพิ่มเติม
+        - [/] `- [/]` = กำลังทำ, `- [-]` = ยกเลิก (พิมพ์ `/` แล้วเลือก **Mark In Progress** หรือ **Mark Cancelled**)
+        - [ ] ใส่ `🔁 ทุกสัปดาห์` (หรือ `ทุก 2 วัน`, `ทุกเดือน`, `every week`) ติ๊กแล้วจะได้งานรอบถัดไปพร้อมวันใหม่
+
+        ## คิดเลข
+        ค่าเช่า = 12,000
+        ค่ากิน = 4,500
+        ค่าเช่า + ค่ากิน =
+
+        บรรทัดที่ลงท้ายด้วย `=` จะแสดงผลลัพธ์ ส่วนบรรทัด `ชื่อ = …` ตั้งชื่อไว้ใช้ทีหลัง
 
         smart folder *To Do* ที่หน้าแรกรวมทุกโน้ตที่ยังมีงานค้าง
         """,

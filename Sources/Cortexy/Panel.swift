@@ -209,7 +209,7 @@ final class PanelController: NSObject {
         DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
             self?.nav.lockAll()
         }
-        Reminders.shared.open = { [weak self] id in self?.nav.openNote(id); self?.show(byHover: false) }
+        Reminders.shared.open = { [weak self] id, line in self?.show(byHover: false); self?.nav.openNote(id, line: line) }
         nav.scheduleReminders()
         // Another Mac may be writing to a synced data folder.
         syncTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in

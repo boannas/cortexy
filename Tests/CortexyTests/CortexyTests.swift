@@ -1857,6 +1857,45 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(found["used.png"]!.notes.count == 1 && found["spare.png"]!.notes.isEmpty && found["sealed.png.locked"]!.sealed)
 }
 
+@Test func taskStatusesAndRepeats() {
+    #expect(MD.lines("- [/] doing\n- [-] dropped") == [.task(false, "doing"), .task(true, "dropped")])
+    #expect(MD.toggleTask("- [/] a") == "- [x] a" && MD.toggleTask("- [-] a") == "- [ ] a")
+    #expect(MD.setStatus("plain", "/") == "- [/] plain" && MD.setStatus("- [x] a", "-") == "- [-] a")
+    let today = DateComponents(calendar: Calendar(identifier: .gregorian), year: 2026, month: 10, day: 5).date!
+    #expect(MD.nextOccurrence("- [x] Pay rent 📅 2026-01-31 🔁 every month", today: today) == "- [ ] Pay rent 📅 2026-02-28 🔁 every month")
+    #expect(MD.nextOccurrence("- [ ] จ่ายค่าน้ำ @๒๕๖๙-๑๐-๐๕ 09:00 🔁 ทุก 2 สัปดาห์", today: today) == "- [ ] จ่ายค่าน้ำ @๒๕๖๙-๑๐-๑๙ 09:00 🔁 ทุก 2 สัปดาห์")
+    #expect(MD.nextOccurrence("- [ ] Stretch 🔁 every day", today: today) == "- [ ] Stretch 🔁 every day 📅 2026-10-06")
+    #expect(MD.nextOccurrence("- [ ] once 📅 2026-10-05", today: today) == nil)
+    let ticked = MD.toggleTask(in: "x\n- [ ] Water plants 📅 2026-10-05 🔁 every week\ny", line: 1)
+    #expect(ticked == "x\n- [x] Water plants 📅 2026-10-05 🔁 every week\n- [ ] Water plants 📅 2026-10-12 🔁 every week\ny")
+    #expect(MD.toggleTask(in: ticked, line: 1).components(separatedBy: "\n").count == 4) // unticking adds nothing
+    let tomorrow = Reminders.Snooze.tomorrow.date(from: today)
+    #expect(Calendar.current.isDate(tomorrow, inSameDayAs: today.addingTimeInterval(86_400)))
+}
+
+@Test func sumsInNotes() {
+    let text = "Budget\nrent = 12,000\nfood = 4,500.50\nrent per month = rent\nrent + food =\n(rent per month - 2000) * 10% =\n- ๒ ^ ๑๐ =\n2024 =\nTotal =\n```\n1 + 1 =\n```\nnot 3 + = \n((((((((((((((((((((1)))))))))))))))))))) + 1 =\n1/0 ="
+    let r = Calc.results(text)
+    let lines = text.components(separatedBy: "\n")
+    func at(_ i: Int) -> String? { r[lines.prefix(i).reduce(0) { $0 + ($1 as NSString).length + 1 }] }
+    #expect(at(4) == "16,500.5")
+    #expect(at(5) == "1,000")
+    #expect(at(6) == "1,024")
+    #expect(at(7) == nil && at(8) == nil) // a lone number, an unknown name: not sums
+    #expect(at(10) == nil)                // in code
+    #expect(at(12) == nil && at(13) == "2" && at(14) == nil)
+    #expect(Calc.evaluate("2 × 3 ÷ 4", vars: [:]) == 1.5)
+}
+
+@MainActor @Test func editorShowsSums() {
+    let h = EditorHarness(dir: tempDir())
+    h.tv.load("rent = 12,000\nrent * 2 =\nend")
+    h.tv.setSelectedRange(NSRange(location: (h.tv.string as NSString).length, length: 0))
+    h.tv.restyle(force: true)
+    let eq = (h.tv.string as NSString).range(of: "2 =").location + 2
+    #expect(h.tv.textStorage!.attribute(.cxMarker, at: eq, effectiveRange: nil) as? String == "sum:24,000")
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {

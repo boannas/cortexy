@@ -903,7 +903,8 @@ struct NoteCard: View {
                 ForEach(Self.pieces(shown, raw: raw), id: \.id) { _, piece in
                     switch piece {
                     case .line(let i, let line):
-                        LineView(line: line, store: store, style: style, highlight: highlight, level: raw.indices.contains(i) ? MD.indentLevel(raw[i]) : 0, note: note.id) { toggle(i) }
+                        LineView(line: line, store: store, style: style, highlight: highlight, level: raw.indices.contains(i) ? MD.indentLevel(raw[i]) : 0, note: note.id,
+                                 status: raw.indices.contains(i) ? MD.taskStatus(raw[i]) ?? " " : " ") { toggle(i) }
                     case .code(let lang, let lines): CodeBlock(lines: lines, lang: lang, style: style)
                     case .table(let rows): TableBlock(rows: rows, style: style)
                     }
@@ -1071,6 +1072,7 @@ struct LineView: View {
     var highlight: [String] = []
     var level = 0 // list nesting, as in the editor
     var note: UUID? // whose line: whether its web images may be fetched
+    var status = " " // a task's box: " ", "x", "/" in progress, "-" cancelled
     let toggle: () -> Void
 
     private var size: CGFloat { style.size }
@@ -1085,8 +1087,8 @@ struct LineView: View {
         case .task(let done, let s):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Button(action: toggle) {
-                    Image(systemName: done ? "checkmark.square.fill" : "square")
-                        .foregroundStyle(done ? Color.cortexyAccent : Color.secondary)
+                    Image(systemName: status == "/" ? "square.lefthalf.filled" : status == "-" ? "xmark.square" : done ? "checkmark.square.fill" : "square")
+                        .foregroundStyle(done && status != "-" || status == "/" ? Color.cortexyAccent : Color.secondary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(done ? "Mark as not done" : "Mark as done")

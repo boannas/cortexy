@@ -18,8 +18,13 @@ enum MD {
         var isMeta: Bool { if case .meta = self { true } else { false } }
     }
 
-    static let taskRegex = try! NSRegularExpression(pattern: #"^(\s*)[-*+] \[([ xX])\] "#)
-    static let listRegex = try! NSRegularExpression(pattern: #"^\s*(?:[-*+] \[[ xX]\] |[-*+] |\d+\. )"#)
+    /// `- [ ]` to do, `- [x]` done, `- [/]` in progress, `- [-]` cancelled (Obsidian Tasks' statuses).
+    static let taskRegex = try! NSRegularExpression(pattern: #"^(\s*)[-*+] \[([ xX/\-])\] "#)
+    static let listRegex = try! NSRegularExpression(pattern: #"^\s*(?:[-*+] \[[ xX/\-]\] |[-*+] |\d+\. )"#)
+    /// Whether a task's box says it's finished with: done or cancelled.
+    static func isDone(_ box: String) -> Bool { ["x", "X", "-"].contains(box) }
+    /// A task line's box: " ", "x", "/" or "-" (nil: not a task).
+    static func taskStatus(_ line: String) -> String? { match(taskRegex, line).map { (line as NSString).substring(with: $0.range(at: 2)) } }
     static let headingRegex = try! NSRegularExpression(pattern: #"^(#{1,6}) +"#)
     /// Inline image `![alt](path)` and file link `[name](file://…)`; the editor shows both as attachments.
     static let imageRegex = try! NSRegularExpression(pattern: #"!\[((?:\\.|[^\]\\\n])*)\]\(([^)\s]+)\)"#)
@@ -84,7 +89,7 @@ enum MD {
         if let (name, url) = whole(fileLinkRegex, raw) { return .file(name: name, url: url) }
         let ns = raw as NSString
         if let m = match(taskRegex, raw) {
-            return .task(ns.substring(with: m.range(at: 2)) != " ", ns.substring(from: m.range.upperBound))
+            return .task(isDone(ns.substring(with: m.range(at: 2))), ns.substring(from: m.range.upperBound))
         }
         if let m = match(headingRegex, raw) {
             return .heading(m.range(at: 1).length, ns.substring(from: m.range.upperBound))
@@ -147,14 +152,24 @@ enum MD {
         guard let m = match(taskRegex, line) else { return line }
         let box = m.range(at: 2)
         let ns = line as NSString
-        return ns.replacingCharacters(in: box, with: ns.substring(with: box) == " " ? "x" : " ")
+        return ns.replacingCharacters(in: box, with: isDone(ns.substring(with: box)) ? " " : "x")
     }
 
+    /// Ticking a repeating task (`🔁 every week`) also adds its next one, below it.
     static func toggleTask(in text: String, line i: Int) -> String {
         var ls = text.components(separatedBy: "\n")
         guard ls.indices.contains(i) else { return text }
+        let next = taskStatus(ls[i]).map(isDone) == false ? nextOccurrence(ls[i]) : nil
         ls[i] = toggleTask(ls[i])
+        if let next { ls.insert(next, at: i + 1) }
         return ls.joined(separator: "\n")
+    }
+
+    /// The line with its box set to `status` (a plain line or list item becomes a task first).
+    static func setStatus(_ line: String, _ status: String) -> String {
+        let task = match(taskRegex, line) == nil ? toggleChecklist(line) : line
+        guard let m = match(taskRegex, task) else { return line }
+        return (task as NSString).replacingCharacters(in: m.range(at: 2), with: status)
     }
 
     /// ⌘L: plain → task, bullet → task, task → plain.
@@ -878,6 +893,211 @@ extension MD {
 
     /// Reading time at about 230 words a minute (rounded up; 0 for an empty note).
     static func readingMinutes(_ words: Int) -> Int { words == 0 ? 0 : max(1, Int((Double(words) / 230).rounded(.up))) }
+}
+
+// MARK: Repeating tasks
+
+extension MD {
+    /// `🔁 every week`, `🔁 every 2 days`, `🔁 ทุกเดือน`: how often a task comes back.
+    static let repeatRegex = try! NSRegularExpression(pattern: #"🔁\s*(?:every\s+(?:(\d+)\s+)?(day|week|month|year)s?|ทุก\s*(?:(\d+)\s*)?(วัน|สัปดาห์|อาทิตย์|เดือน|ปี))"#, options: .caseInsensitive)
+
+    static func repetition(_ line: String) -> (unit: Calendar.Component, count: Int)? {
+        guard let m = match(repeatRegex, line) else { return nil }
+        let ns = line as NSString
+        func group(_ i: Int) -> String? { m.range(at: i).location == NSNotFound ? nil : ns.substring(with: m.range(at: i)) }
+        let n = Int(asciiDigits(group(1) ?? group(3) ?? "1")) ?? 1
+        let unit: Calendar.Component = switch (group(2) ?? group(4) ?? "").lowercased() {
+        case "week", "สัปดาห์", "อาทิตย์": .weekOfYear
+        case "month", "เดือน": .month
+        case "year", "ปี": .year
+        default: .day
+        }
+        return (unit, max(1, n))
+    }
+
+    /// A repeating task's next one: unticked, its date moved on by one repetition (from its date, or from
+    /// today if it has none), written as the date was (พ.ศ. year, Thai digits).
+    static func nextOccurrence(_ line: String, today: Date = Date()) -> String? {
+        guard taskStatus(line) != nil, let rule = repetition(line) else { return nil }
+        let cal = Calendar(identifier: .gregorian)
+        let fresh = setStatus(line, " ")
+        guard let due = due(fresh) else {
+            let next = cal.date(byAdding: rule.unit, value: rule.count, to: cal.startOfDay(for: today))!
+            return fresh + " 📅 " + dayString(next)
+        }
+        let next = cal.date(byAdding: rule.unit, value: rule.count, to: due.date)!
+        guard let m = match(dueRegex, fresh) else { return nil }
+        let old = (fresh as NSString).substring(with: m.range(at: 1))
+        var day = dayString(next)
+        if let y = Int(asciiDigits(String(old.prefix(4)))), y >= 2400 { day = String(Int(day.prefix(4))! + 543) + day.dropFirst(4) }
+        if old != asciiDigits(old) { day = thaiDigits(day) }
+        return (fresh as NSString).replacingCharacters(in: m.range(at: 1), with: day)
+    }
+}
+
+// MARK: Sums in notes
+
+/// A line ending in `=` shows its result (`12 × 3 + 4 =`); `name = expression` lines set names to use later
+/// (`rent = 12,000`). Numbers may have thousands commas, Thai digits, `%` (of 1), `k`/`m` suffixes are not read.
+/// The parser is its own: NSExpression throws Objective-C exceptions on bad input, which Swift can't catch.
+enum Calc {
+    static let assignment = try! NSRegularExpression(pattern: #"^\s*(?:[-*+] |\d+\. )?([\p{L}_][\p{L}\p{M}\p{N}_ ]*?)\s*=\s*(.+?)\s*$"#)
+
+    /// Results by the UTF-16 offset of their line's start, for the lines that end in `=`.
+    static func results(_ text: String) -> [Int: String] {
+        guard text.contains("=") else { return [:] }
+        var vars: [String: Double] = [:], out: [Int: String] = [:], inCode = false, at = 0
+        let meta = MD.frontmatter(text)?.lines ?? 0
+        for (i, line) in text.components(separatedBy: "\n").enumerated() {
+            defer { at += (line as NSString).length + 1 }
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") { inCode.toggle(); continue }
+            guard !inCode, i >= meta, line.contains("=") else { continue }
+            var body = line.trimmingCharacters(in: .whitespaces)
+            let asks = body.hasSuffix("=") && !body.hasSuffix("==")
+            if asks { body = String(body.dropLast()).trimmingCharacters(in: .whitespaces) }
+            if let m = MD.match(assignment, body) {
+                let ns = body as NSString
+                let name = ns.substring(with: m.range(at: 1)).lowercased(), rhs = ns.substring(with: m.range(at: 2))
+                guard let v = evaluate(rhs, vars: vars, alone: true) else { continue }
+                vars[name] = v
+                if asks { out[at] = format(v) }
+            } else if asks, let v = evaluate(body.replacingOccurrences(of: #"^(?:[-*+] |\d+\. )"#, with: "", options: .regularExpression), vars: vars) {
+                out[at] = format(v)
+            }
+        }
+        return out
+    }
+
+    static func format(_ v: Double) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = abs(v) < 1 ? 6 : 4
+        f.locale = Locale(identifier: "en_US")
+        return f.string(from: NSNumber(value: v)) ?? "\(v)"
+    }
+
+    /// nil for anything that isn't a sum: words, unknown names, and (unless `alone`, as in `rent = 12,000`) a
+    /// lone number: a heading "2024 =" isn't asking.
+    static func evaluate(_ s: String, vars: [String: Double], alone: Bool = false) -> Double? {
+        var p = Parser(tokens: tokenize(s, names: Set(vars.keys)), vars: vars)
+        guard !p.tokens.isEmpty, let v = p.expression(), p.i == p.tokens.count, v.isFinite,
+              alone || p.tokens.count > 1 || p.usedName else { return nil }
+        return v
+    }
+
+    enum Token: Equatable { case number(Double), name(String), op(Character) }
+
+    /// `names`: the ones set so far, so a name of several words ("rent per month") is read as one.
+    static func tokenize(_ s: String, names: Set<String> = []) -> [Token] {
+        let chars = Array(MD.asciiDigits(s))
+        var out: [Token] = [], i = 0
+        func word(at k: Int) -> (String, Int) { // letters, digits and _ from k; and where it ends
+            var j = k
+            while j < chars.count, chars[j].isLetter || chars[j].isNumber || chars[j] == "_" || chars[j].unicodeScalars.allSatisfy({ $0.properties.generalCategory == .nonspacingMark }) { j += 1 }
+            return (String(chars[k..<j]).lowercased(), j)
+        }
+        while i < chars.count {
+            let c = chars[i]
+            if c.isWhitespace { i += 1; continue }
+            if c.isNumber || c == "." {
+                var j = i, text = ""
+                while j < chars.count {
+                    if chars[j].isNumber || chars[j] == "." { text.append(chars[j]); j += 1 }
+                    // 12,000: a comma before exactly three digits groups thousands
+                    else if chars[j] == ",", (1...3).allSatisfy({ j + $0 < chars.count && chars[j + $0].isNumber }),
+                            j + 4 >= chars.count || !chars[j + 4].isNumber { j += 1 }
+                    else { break }
+                }
+                guard let v = Double(text) else { return [] }
+                out.append(.number(v))
+                i = j
+            } else if c.isLetter || c == "_" {
+                var (name, j) = word(at: i)
+                while true { // more words, while they make up a known name
+                    var k = j
+                    while k < chars.count, chars[k] == " " { k += 1 }
+                    guard k > j, k < chars.count, chars[k].isLetter else { break }
+                    let (next, end) = word(at: k)
+                    let joined = name + " " + next
+                    guard names.contains(where: { $0 == joined || $0.hasPrefix(joined + " ") }) else { break }
+                    name = joined
+                    j = end
+                }
+                out.append(.name(name))
+                i = j
+            } else if "+-*/×÷^%()".contains(c) {
+                out.append(.op(c == "×" ? "*" : c == "÷" ? "/" : c))
+                i += 1
+            } else { return [] } // anything else: not a sum
+        }
+        return out
+    }
+
+    struct Parser {
+        let tokens: [Token]
+        let vars: [String: Double]
+        var i = 0, depth = 0, usedName = false
+
+        mutating func peek(_ c: Character) -> Bool { i < tokens.count && tokens[i] == .op(c) }
+
+        mutating func expression() -> Double? {
+            guard var v = term() else { return nil }
+            while peek("+") || peek("-") {
+                let plus = peek("+"); i += 1
+                guard let r = term() else { return nil }
+                v = plus ? v + r : v - r
+            }
+            return v
+        }
+
+        mutating func term() -> Double? {
+            guard var v = power() else { return nil }
+            while peek("*") || peek("/") {
+                let times = peek("*"); i += 1
+                guard let r = power() else { return nil }
+                v = times ? v * r : v / r
+            }
+            return v
+        }
+
+        mutating func power() -> Double? {
+            guard let b = unary() else { return nil }
+            if peek("^") { i += 1; guard let e = power() else { return nil }; return pow(b, e) }
+            return b
+        }
+
+        mutating func unary() -> Double? {
+            if peek("-") { i += 1; return unary().map { -$0 } }
+            if peek("+") { i += 1; return unary() }
+            guard var v = primary() else { return nil }
+            while peek("%") { i += 1; v /= 100 }
+            return v
+        }
+
+        mutating func primary() -> Double? {
+            guard i < tokens.count else { return nil }
+            depth += 1
+            defer { depth -= 1 }
+            guard depth < 64 else { return nil }
+            switch tokens[i] {
+            case .number(let v): i += 1; return v
+            case .name(let n):
+                i += 1
+                if ["sqrt", "abs", "round"].contains(n), peek("(") {
+                    guard let a = primary() else { return nil }
+                    return n == "sqrt" ? sqrt(a) : n == "abs" ? abs(a) : a.rounded()
+                }
+                usedName = true
+                return vars[n]
+            case .op("("):
+                i += 1
+                guard let v = expression(), peek(")") else { return nil }
+                i += 1
+                return v
+            default: return nil
+            }
+        }
+    }
 }
 
 // MARK: Search queries

@@ -196,6 +196,13 @@ enum Styler {
             kept.append((r, a))
         }
 
+        var sumCache: [Int: String]?
+        // ponytail: only restyled lines show new results; changing `rent = …` updates `rent * 2 =` below when that line
+        // is restyled (caret through it, or reopening). Restyle every "=" line on such edits if that's missed.
+        func sums() -> [Int: String] { // read once a style, only if a line asks (names set above it count)
+            if sumCache == nil { sumCache = Calc.results(storage.string) }
+            return sumCache!
+        }
         storage.beginEditing()
         storage.setAttributes(base(st), range: full)
         var inCode = fences(storage.string, before: full.location) % 2 == 1
@@ -245,9 +252,10 @@ enum Styler {
                 let marker = NSRange(location: range.location + m.range(at: 1).length,
                                      length: m.range.length - m.range(at: 1).length)
                 indentList(storage, line: line, range: range, st, marker: st.size * 1.7)
-                let done = (line as NSString).substring(with: m.range(at: 2)) != " "
+                let box = (line as NSString).substring(with: m.range(at: 2)), done = MD.isDone(box)
+                let kind = box == "/" ? "doing" : box == "-" ? "cancelled" : done ? "done" : "task"
                 // Collapse "- [ ] " to zero width and reserve a fixed gap with kerning, so "[x]" and "[ ]" line up.
-                storage.addAttributes([.font: hiddenFont, .foregroundColor: NSColor.clear, .cxMarker: done ? "done" : "task"], range: marker)
+                storage.addAttributes([.font: hiddenFont, .foregroundColor: NSColor.clear, .cxMarker: kind], range: marker)
                 storage.addAttribute(.kern, value: st.size * 1.7, range: NSRange(location: marker.location, length: 1))
                 if done {
                     let rest = NSRange(location: NSMaxRange(marker), length: NSMaxRange(range) - NSMaxRange(marker))
@@ -313,6 +321,12 @@ enum Styler {
                 storage.addAttribute(.paragraphStyle, value: p, range: range)
             }
             inline(storage, line: line, at: range.location, st, markup: markup)
+            // A sum: its result is drawn after the "=" (see `markers`).
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasSuffix("="), !trimmed.hasSuffix("=="), let result = sums()[range.location] {
+                let eq = (line as NSString).range(of: "=", options: .backwards)
+                storage.addAttribute(.cxMarker, value: "sum:" + result, range: NSRange(location: range.location + eq.location, length: 1))
+            }
         }
         for b in blocks where NSIntersectionRange(b.whole, full).length > 0 {
             let code = ns.substring(with: b.body)
@@ -505,7 +519,7 @@ enum Styler {
         }
         each(MD.dueRegex) { m, at in // due dates, colored by how pressing they are
             guard !inCode(m.range), let d = MD.due((line as NSString).substring(with: m.range)) else { return }
-            let done = MD.match(MD.taskRegex, line).map { (line as NSString).substring(with: $0.range(at: 2)) != " " } ?? false
+            let done = MD.taskStatus(line).map(MD.isDone) ?? false
             let due = Due.of(d.date, hasTime: d.hasTime, done: done)
             s.addAttributes([.foregroundColor: due.color, .font: st.font(st.size - 1, weight: .medium)], range: at(m.range))
             if due != .done {
@@ -878,6 +892,11 @@ final class MarkdownTextView: NSTextView {
                 return
             }
             if kind.hasPrefix("callout:") { return } // its box is drawn under the text (drawBackground)
+            if kind.hasPrefix("sum:") { // after the "=": where its result is written
+                let box = lm.boundingRect(forGlyphRange: NSRange(location: g, length: 1), in: tc)
+                out.append((range, kind, NSRect(x: box.maxX + textContainerOrigin.x + 6, y: box.minY + textContainerOrigin.y, width: 200, height: box.height)))
+                return
+            }
             if kind == "quote" { // the bar down a quote's whole paragraph
                 let para = (storage.string as NSString).paragraphRange(for: range)
                 let box = lm.boundingRect(forGlyphRange: lm.glyphRange(forCharacterRange: para, actualCharacterRange: nil), in: tc)
@@ -933,6 +952,11 @@ final class MarkdownTextView: NSTextView {
                 NSBezierPath(roundedRect: m.rect, xRadius: 1.5, yRadius: 1.5).fill()
                 continue
             }
+            if m.kind.hasPrefix("sum:") {
+                let text = NSAttributedString(string: String(m.kind.dropFirst(4)), attributes: [.font: style.font(weight: .semibold), .foregroundColor: style.checkColor])
+                text.draw(at: NSPoint(x: m.rect.minX, y: m.rect.minY + (m.rect.height - text.size().height) / 2))
+                continue
+            }
             if m.kind.hasPrefix("callout-") {
                 let arg = String(m.kind.split(separator: ":").last ?? "")
                 let icon = m.kind.hasPrefix("callout-icon")
@@ -946,9 +970,10 @@ final class MarkdownTextView: NSTextView {
             let done = m.kind == "done"
             let bullet = m.kind.hasPrefix("bullet")
             let level = Int(m.kind.dropFirst(6)) ?? 0
-            let name = bullet ? ["circle.fill", "circle", "square.fill"][level % 3] : done ? "checkmark.square.fill" : "square"
+            let name = bullet ? ["circle.fill", "circle", "square.fill"][level % 3]
+                : done ? "checkmark.square.fill" : m.kind == "doing" ? "square.lefthalf.filled" : m.kind == "cancelled" ? "xmark.square" : "square"
             let size: CGFloat = bullet ? (level == 1 ? 7 : 6) : style.size + 1
-            let colors: [NSColor] = done ? [.white, style.checkColor] : bullet ? [style.checkColor] : [.secondaryLabelColor] // check, box
+            let colors: [NSColor] = done ? [.white, style.checkColor] : bullet || m.kind == "doing" ? [style.checkColor] : [.secondaryLabelColor] // check, box
             guard let img = markerImage(name, size: size, colors: colors, key: "\(name)|\(size)|\(look)") else { continue }
             let s = img.size
             // Symbol images carry padding below the glyph; center the visible glyph (its alignment rect), not the image.
@@ -1054,12 +1079,19 @@ final class MarkdownTextView: NSTextView {
             replace(m.range(at: 3), with: hit.kind.hasSuffix("-") ? "+" : "-") // folds and unfolds, kept in the note
             return
         }
-        if let hit = markers().first(where: { ($0.kind == "task" || $0.kind == "done") && $0.rect.contains(p) }) {
+        if let hit = markers().first(where: { ["task", "done", "doing", "cancelled"].contains($0.kind) && $0.rect.contains(p) }) {
             // "- [ ] " → the box character is 3 UTF-16 units in
             let box = NSRange(location: hit.range.location + 3, length: 1)
             let locked = !isEditable // a read-only note still ticks its boxes
             isEditable = true
-            replace(box, with: hit.kind == "done" ? " " : "x")
+            let ticking = hit.kind == "task" || hit.kind == "doing"
+            let line = (string as NSString).paragraphRange(for: hit.range)
+            let next = ticking ? MD.nextOccurrence((string as NSString).substring(with: line).trimmingCharacters(in: .newlines)) : nil
+            replace(box, with: ticking ? "x" : " ")
+            if let next { // a repeating task: its next one goes under it
+                let end = NSMaxRange(line) > 0 && (string as NSString).character(at: NSMaxRange(line) - 1) == 10 ? NSMaxRange(line) - 1 : NSMaxRange(line)
+                replace(NSRange(location: end, length: 0), with: "\n" + next)
+            }
             isEditable = !locked
             return
         }
@@ -1395,7 +1427,8 @@ final class MarkdownTextView: NSTextView {
         ("Heading 1", "cxHeading1:"), ("Heading 2", "cxHeading2:"), ("Heading 3", "cxHeading3:"), ("Bullet List", "cxBullet:"),
         ("Numbered List", "cxNumbered:"), ("Checklist", "cxTask:"), ("Quote", "cxQuote:"), ("Callout", "cxCallout:"),
         ("Code Block", "cxCodeBlock:"), ("Table", "cxTable:"), ("Divider", "cxDivider:"), ("Highlight", "cxHighlight:"),
-        ("Due Date", "cxDue:"), ("Today's Date", "cxToday:"),
+        ("Due Date", "cxDue:"), ("Today's Date", "cxToday:"), ("Mark In Progress", "cxDoing:"), ("Mark Cancelled", "cxCancelled:"),
+        ("Repeat Weekly", "cxRepeat:"),
     ]
 
     /// What the list offers for `kind` and what's typed so far.
@@ -1640,6 +1673,9 @@ final class MarkdownTextView: NSTextView {
     @objc func cxHeading2(_ sender: Any?) { transformLines { MD.heading($0, level: 2) } }
     @objc func cxHeading3(_ sender: Any?) { transformLines { MD.heading($0, level: 3) } }
     @objc func cxCallout(_ sender: Any?) { transformLines { $0.hasPrefix("> [!") ? $0 : "> [!note] " + ($0.hasPrefix("> ") ? String($0.dropFirst(2)) : $0) } }
+    @objc func cxDoing(_ sender: Any?) { transformLines { MD.setStatus($0, MD.taskStatus($0) == "/" ? " " : "/") } }
+    @objc func cxCancelled(_ sender: Any?) { transformLines { MD.setStatus($0, MD.taskStatus($0) == "-" ? " " : "-") } }
+    @objc func cxRepeat(_ sender: Any?) { transformLines { MD.repetition($0) == nil ? MD.setStatus($0, MD.taskStatus($0) ?? " ") + " 🔁 every week" : $0 } }
     @objc func cxToday(_ sender: Any?) { insertText(Nav.expand("{{date}}").text, replacementRange: selectedRange()) }
     @objc func cxLink(_ sender: Any?) {
         let sel = selectedRange()
