@@ -18,6 +18,7 @@ import UniformTypeIdentifiers
             guard oldValue != route else { return }
             if search.isEmpty { page += 1 }
             if !goingBack { trail = Array((trail + [(oldValue, search.isEmpty ? clearedSearch ?? "" : search)]).suffix(50)) }
+            if !goingBack && !goingForward { ahead = [] }
             clearedSearch = nil // it belonged to this step only
             // Leaving a note (not just following it to another folder): update links to it, drop it if empty.
             if case let .note(f, was) = oldValue, was != routeNote {
@@ -73,6 +74,9 @@ import UniformTypeIdentifiers
     }
     /// Where you've been (and what you'd searched), for Back.
     @ObservationIgnored private var trail: [(route: Route, search: String)] = []
+    /// Where Back came from, for Forward (⌘]); a new step elsewhere clears it.
+    private(set) var ahead: [(route: Route, search: String)] = []
+    @ObservationIgnored private var goingForward = false
     @ObservationIgnored private var goingBack = false
     @ObservationIgnored private var clearedSearch: String?
     var searchInFolder = false // search only the open folder (and what's inside it)
@@ -81,6 +85,8 @@ import UniformTypeIdentifiers
     @ObservationIgnored private var tagCache: (stamp: Int, tags: [(name: String, count: Int)])?
     var searchFocus = 0
     var historyNote: UUID? // showing this note's Version History
+    var calendarShown = false    // the daily notes calendar (⇧⌘D)
+    var attachmentsShown = false // every attached file, and which notes use it
     var unlocked: [UUID: String] = [:] // locked notes opened this session: their text, only ever in memory
     @ObservationIgnored var keys: [UUID: SymmetricKey] = [:]
     @ObservationIgnored var salts: [UUID: Data] = [:] // each key's own salt (the stored box may have changed under it)
@@ -179,6 +185,7 @@ import UniformTypeIdentifiers
         let left: UUID? = if case .folder(let f) = route, !Folder.isBuiltIn(f) { f } else { routeNote }
         while let last = trail.popLast() {
             guard exists(last.route), last.route != route else { continue }
+            ahead.append((route, ""))
             goingBack = true
             route = last.route
             goingBack = false
@@ -186,6 +193,7 @@ import UniformTypeIdentifiers
             if let left, case .folder = route { selection = left }
             return
         }
+        if route != .home { ahead.append((route, "")) }
         goingBack = true // going up isn't a step to come back to
         defer { goingBack = false; if let left, case .folder = route { selection = left } }
         switch route {
@@ -194,6 +202,27 @@ import UniformTypeIdentifiers
         case .folder(let f): if f != Folder.rootID { route = .folder(store.folder(f).flatMap(store.parentID) ?? Folder.rootID) }
         case .archive, .upcoming: route = .home
         }
+    }
+
+    /// ⌘]: back to where Back left.
+    func forward() {
+        while let next = ahead.popLast() {
+            guard exists(next.route), next.route != route else { continue }
+            goingForward = true
+            search = ""
+            route = next.route
+            goingForward = false
+            if !next.search.isEmpty { search = next.search }
+            return
+        }
+    }
+
+    /// Any note at all (not archived, not locked), for rediscovering old ones.
+    func openRandomNote() {
+        let all = store.liveFolders.filter { !store.inTrash($0.id) }.flatMap { f in f.notes.filter { !$0.archived && $0.lock == nil }.map { (f.id, $0.id) } }
+        guard let (f, n) = all.filter({ $0.1 != routeNote }).randomElement() ?? all.randomElement() else { return }
+        search = ""
+        route = .note(f, n)
     }
 
     private var routeNote: UUID? { if case .note(_, let n) = route { n } else { nil } }
@@ -621,6 +650,78 @@ import UniformTypeIdentifiers
         }
     }
 
+    /// Notes that name this note (its title or an alias) in their text without linking to it.
+    func mentions(of names: [String], excluding nid: UUID) -> [(Folder, Note, String)] {
+        store.liveFolders.filter { !store.inTrash($0.id) }.flatMap { f in
+            f.notes.compactMap { n -> (Folder, Note, String)? in
+                guard n.id != nid, n.lock == nil, !MD.wikiLinks(n.text).contains(where: { t in names.contains { MD.links(t, to: $0) } }),
+                      let name = names.first(where: { !MD.mentionRanges($0, in: n.text).isEmpty }) else { return nil }
+                return (f, n, name)
+            }
+        }
+    }
+
+    /// The first mention of `name` in that note becomes a `[[link]]` (Undo puts it back).
+    func linkMention(_ fid: UUID, _ nid: UUID, name: String, title: String) {
+        guard let n = store.note(fid, nid), let r = MD.mentionRanges(name, in: n.text).first else { return }
+        let found = (n.text as NSString).substring(with: r)
+        let link = found == title ? "[[\(title)]]" : "[[\(title)|\(found)]]"
+        let before = n.text
+        store.updateNote(fid, nid) { $0.text = ($0.text as NSString).replacingCharacters(in: r, with: link) }
+        flash("Linked in “\(n.title)”") { [weak self] in self?.store.updateNote(fid, nid) { $0.text = before } }
+    }
+
+    /// `#old` (and `#old/…`) becomes `#new` in every note; a tag that exists already merges into it. Undo puts it back.
+    func renameTag(_ old: String, to new: String) {
+        let new = new.trimmingCharacters(in: CharacterSet(charactersIn: "# ")).lowercased()
+        guard let to = MD.tagName(new), to != old else { return }
+        var before: [(UUID, UUID, String)] = []
+        for f in store.liveFolders {
+            for n in f.notes where n.lock == nil {
+                let text = MD.renamedTag(n.text, from: old, to: to)
+                guard text != n.text else { continue }
+                before.append((f.id, n.id, n.text))
+                store.updateNote(f.id, n.id) { $0.text = text }
+            }
+        }
+        guard !before.isEmpty else { return }
+        flash("#\(old) is now #\(to) in \(MD.plural(before.count, "note"))") { [weak self] in
+            for (f, n, text) in before { self?.store.updateNote(f, n) { $0.text = text } }
+        }
+    }
+
+    /// Asks for a tag's new name.
+    func askRenameTag(_ old: String) {
+        let answer: String? = PanelController.shared?.modal {
+            let a = NSAlert()
+            a.messageText = "Rename #\(old)"
+            a.informativeText = "Every note with it changes. A name that's already a tag merges the two."
+            let field = NSTextField(string: old)
+            field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+            a.accessoryView = field
+            a.addButton(withTitle: "Rename")
+            a.addButton(withTitle: "Cancel")
+            a.window.initialFirstResponder = field
+            return a.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+        } ?? nil
+        if let answer { renameTag(old, to: answer) }
+    }
+
+    /// Files in the attachments folder, with the notes that use each. A sealed one (`.locked`) belongs to a
+    /// locked note whose text can't be read: it never counts as unused.
+    struct Attachment: Identifiable { let url: URL; let notes: [(UUID, Note)]; let sealed: Bool; var id: URL { url } }
+
+    func attachments() -> [Attachment] {
+        let dir = store.directory.appendingPathComponent("attachments")
+        let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { !$0.lastPathComponent.hasPrefix(".") }
+        let notes = store.folders.flatMap { f in f.notes.map { (f.id, $0) } } // Recently Deleted's too: they may come back
+        return files.map { url in
+            let sealed = url.pathExtension == "locked"
+            return Attachment(url: url, notes: sealed ? [] : notes.filter { $0.1.text.contains("attachments/" + url.lastPathComponent) }, sealed: sealed)
+        }.sorted { $0.url.lastPathComponent < $1.url.lastPathComponent }
+    }
+
     /// `cortexy://tag/x` searches the tag; `cortexy://open?title=T` opens that note, creating it if there's none.
     @discardableResult func openLink(_ url: URL) -> Bool {
         guard url.scheme == "cortexy" else { return false }
@@ -802,7 +903,7 @@ import UniformTypeIdentifiers
         }
         var s = out as String
         for (key, value) in [("{{date}}", format(day)), ("{{time}}", format("HH:mm")), ("{{datetime}}", format(day + " HH:mm")),
-                             ("{{weekday}}", format("EEEE")), ("{{folder}}", folder)] {
+                             ("{{weekday}}", format("EEEE")), ("{{week}}", format("w")), ("{{folder}}", folder)] {
             s = s.replacingOccurrences(of: key, with: value)
         }
         let cursor = (s as NSString).range(of: "{{cursor}}")
@@ -837,16 +938,41 @@ import UniformTypeIdentifiers
         open(fid, id, caret: caret)
     }
 
+    enum Period: String, CaseIterable { case day, week, month }
+
+    /// The note's title for `period` around `date`: the date format for a day, a week's ("2026-W41") or a month's.
+    static func periodTitle(_ period: Period, _ date: Date) -> String {
+        switch period {
+        case .day: return expand("{{date}}", date: date).text
+        case .week:
+            let f = dateFormatter()
+            f.calendar = Calendar(identifier: .iso8601) // weeks start on Monday, week 1 holds the year's first Thursday
+            f.calendar.locale = f.locale
+            f.dateFormat = Prefs.text(Prefs.weekFormat)
+            return f.string(from: date)
+        case .month: return expand("{{date:\(Prefs.text(Prefs.monthFormat))}}", date: date).text
+        }
+    }
+
+    /// The days that have a daily note (by title), for the calendar's dots.
+    func dailyTitles() -> Set<String> {
+        let name = Prefs.text(Prefs.dailyFolder)
+        return Set(store.moveTargets.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }.map { store.folder($0.id)?.notes.map(\.title) ?? [] } ?? [])
+    }
+
     /// ⌘D: today's note in the Daily folder, made from the daily template (Settings) the first time.
-    func openToday() {
+    func openToday() { openPeriodic(.day) }
+
+    /// A day's, week's or month's note (made from its template the first time), all in the Daily folder.
+    func openPeriodic(_ period: Period, date: Date = Date()) {
         let name = Prefs.text(Prefs.dailyFolder)
         let fid = store.moveTargets.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }?.id ?? store.addFolder(name)
-        let title = Nav.expand("{{date}}").text
+        let title = Nav.periodTitle(period, date)
         if let n = store.folder(fid)?.notes.first(where: { $0.title == title }) { return open(fid, n.id, caret: nil) }
-        let wanted = Prefs.text(Prefs.dailyTemplate)
+        let wanted = Prefs.text([.day: Prefs.dailyTemplate, .week: Prefs.weeklyTemplate, .month: Prefs.monthlyTemplate][period]!)
         let template = wanted.isEmpty ? nil : templates.first { $0.title.localizedCaseInsensitiveCompare(wanted) == .orderedSame }
-        var (text, caret) = template.map { Nav.expand($0.text, folder: name) } ?? ("# \(title)\n", nil)
-        if MD.title(text) != title { // the date is how today's note is found again
+        var (text, caret) = template.map { Nav.expand($0.text, date: date, folder: name) } ?? ("# \(title)\n", nil)
+        if MD.title(text) != title { // the date is how the note is found again
             let head = "# \(title)\n"
             text = head + text
             caret = caret.map { $0 + (head as NSString).length }
@@ -951,6 +1077,11 @@ import UniformTypeIdentifiers
             cmd("New Folder", "folder.badge.plus") { [weak self] in self?.newFolder() },
             cmd("Search", "magnifyingglass") { [weak self] in self?.searchFocus += 1 },
             cmd("Open Today's Note", "calendar") { [weak self] in self?.openToday() },
+            cmd("Open This Week's Note", "calendar") { [weak self] in self?.openPeriodic(.week) },
+            cmd("Open This Month's Note", "calendar") { [weak self] in self?.openPeriodic(.month) },
+            cmd("Daily Notes Calendar", "calendar.badge.clock") { [weak self] in self?.calendarShown = true },
+            cmd("Open a Random Note", "shuffle") { [weak self] in self?.openRandomNote() },
+            cmd("Show Attachments", "paperclip") { [weak self] in self?.attachmentsShown = true },
             cmd("Go Home", "house") { [weak self] in self?.search = ""; self?.route = .home },
             cmd("Show Archive", "archivebox") { [weak self] in self?.search = ""; self?.route = .archive },
             cmd("Show Upcoming", "calendar") { [weak self] in self?.search = ""; self?.route = .upcoming },

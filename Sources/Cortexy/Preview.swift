@@ -431,7 +431,8 @@ struct PreviewBrowser: View {
                 // The path's last level fills the card; going elsewhere fades it over, the card stays put.
                 if let item = path.last {
                     Group {
-                        if item.isText { NotePage(controller: controller, item: item) }
+                        if case .version(let id, let i) = item { DiffPage(controller: controller, nid: id, index: i) }
+                        else if item.isText { NotePage(controller: controller, item: item) }
                         else if case .web(let url) = item { WebPage(controller: controller, url: url) }
                         else { FolderPage(controller: controller, index: path.count - 1, item: item) }
                     }
@@ -516,6 +517,38 @@ struct PreviewRowView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint(row.isFolder ? "Looks inside" : "Opens the note")
+    }
+}
+
+/// A kept version against the note now: lines since added in green, lines since removed in red, the rest plain.
+struct DiffPage: View {
+    let controller: PreviewController
+    let nid: UUID
+    let index: Int
+
+    var body: some View {
+        let versions = controller.nav.store.history(nid)
+        let old = versions.indices.contains(index) ? versions[index].text : ""
+        let now = controller.nav.store.folderOf(nid).flatMap { controller.nav.store.note($0.id, nid)?.text } ?? ""
+        let lines = Array(MD.diffLines(old, now).enumerated())
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 1) {
+                ForEach(lines, id: \.offset) { _, l in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(l.0 == .added ? "+" : l.0 == .removed ? "−" : " ").font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(l.1.isEmpty ? " " : l.1).font(.system(size: 12)).strikethrough(l.0 == .removed).textSelection(.enabled)
+                    }
+                    .padding(.horizontal, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(l.0 == .added ? Color.green.opacity(0.16) : l.0 == .removed ? Color.red.opacity(0.14) : .clear)
+                }
+            }
+            .padding(8)
+        }
+        .overlay(alignment: .topTrailing) {
+            Text("vs. now").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 6).padding(.vertical, 2).background(.thinMaterial, in: Capsule()).padding(8)
+        }
     }
 }
 

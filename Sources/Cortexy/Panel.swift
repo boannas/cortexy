@@ -103,6 +103,8 @@ enum Prefs {
     static let quickLook = "quickLook"                 // double-clicking an attachment previews it (else opens it in its app)
     static let linkPreviews = "linkPreviews"           // pasted links get their page's title; resting on one shows the page's card
     static let selectionBar = "selectionBar"           // the formatting bar over selected text
+    static let weekFormat = "weekFormat", monthFormat = "monthFormat"             // titles of weekly and monthly notes
+    static let weeklyTemplate = "weeklyTemplate", monthlyTemplate = "monthlyTemplate"
 
     static var keptOpen: Bool { UserDefaults.standard.bool(forKey: keepOpen) }
     /// For every window of ours: none while hidden from capture.
@@ -114,6 +116,7 @@ enum Prefs {
         codeTab: 4, trashDays: 30, backupsKept: 14,
         templatesFolder: "Templates", dailyFolder: "Daily", dailyTemplate: "", dateFormat: "yyyy-MM-dd", todayKey: "", systemCalendar: false, versionsKept: 50, webImages: false, reminders: true, remindAt: 9, touchID: false, lockOnHide: true,
         keepOpen: false, panelOpacity: 1.0, hideFromCapture: false, quickLook: true, linkPreviews: true, selectionBar: true,
+        weekFormat: "YYYY-'W'ww", monthFormat: "yyyy-MM", weeklyTemplate: "", monthlyTemplate: "",
         toggleKey: HotKeySpec(keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), display: "⌃⌥N").encoded,
         newNoteKey: "",
     ]
@@ -690,6 +693,10 @@ final class PanelController: NSObject {
             case kVK_Escape where nav.historyNote != nil:
                 nav.historyNote = nil
                 return true
+            case kVK_Escape where nav.calendarShown || nav.attachmentsShown:
+                nav.calendarShown = false
+                nav.attachmentsShown = false
+                return true
             case kVK_Escape:
                 if nav.iconPicking != nil { nav.iconPicking = nil } else if !nav.marked.isEmpty { nav.marked = [] } else if !nav.search.isEmpty { nav.search = "" } else { hide() }
                 return true
@@ -752,6 +759,8 @@ final class PanelController: NSObject {
         case ("[", false) where isEditingNote && inText: return NSApp.sendAction(#selector(MarkdownTextView.cxOutdent(_:)), to: nil, from: panel)
         case ("]", false) where isEditingNote && inText: return NSApp.sendAction(#selector(MarkdownTextView.cxIndent(_:)), to: nil, from: panel)
         case ("[", false): nav.back()
+        case ("]", false): nav.forward()
+        case ("d", true): nav.calendarShown = true
         case (",", false): SettingsWindow.show()
         case ("w", false): hide()
         case ("q", false): NSApp.terminate(nil)

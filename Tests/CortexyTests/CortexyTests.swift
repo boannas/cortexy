@@ -1793,6 +1793,70 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(h.tv.completionContext() == nil) // a / inside a word or link isn't a command
 }
 
+@Test func mentionsTagRenamesAndDiffs() {
+    let t = "Plan B is set. plans aside, see [[Plan B]] and `Plan B` — แผนสำรองของทีม"
+    #expect(MD.mentionRanges("Plan B", in: t).map(\.location) == [0])        // not in the link, the code, or "plans"
+    #expect(MD.mentionRanges("แผนสำรอง", in: t).count == 1)                    // Thai: found inside the run of letters
+    #expect(MD.mentionRanges("ab", in: "ab ab").isEmpty)                      // too short to count
+    let tagged = "---\ntags: [work, home]\n---\n#work and #work/meeting but not #workshop"
+    #expect(MD.renamedTag(tagged, from: "work", to: "job") == "---\ntags: [job, home]\n---\n#job and #job/meeting but not #workshop")
+    #expect(MD.renamedTag("---\ntags:\n  - work\nother: work\n---\nx", from: "work", to: "job") == "---\ntags:\n  - job\nother: work\n---\nx")
+    let d = MD.diffLines("a\nb\nc", "a\nc\nd")
+    #expect(d.map(\.0) == [.same, .removed, .same, .added] && d.map(\.1) == ["a", "b", "c", "d"])
+    #expect(MD.readingMinutes(0) == 0 && MD.readingMinutes(10) == 1 && MD.readingMinutes(461) == 3)
+}
+
+@MainActor @Test func forwardRandomMentionsAndTags() {
+    let s = Store(testing: tempDir())
+    let nav = Nav(store: s)
+    let a = s.addNote(to: Folder.rootID, text: "# Alpha\nabout #work/meeting")!
+    let b = s.addNote(to: Folder.rootID, text: "# Beta\nAlpha came up, #work")!
+    nav.route = .note(Folder.rootID, a)
+    nav.route = .note(Folder.rootID, b)
+    nav.back()
+    #expect(nav.route == .note(Folder.rootID, a) && !nav.ahead.isEmpty)
+    nav.forward()
+    #expect(nav.route == .note(Folder.rootID, b) && nav.ahead.isEmpty)
+    nav.back()
+    nav.route = .home                       // a new step: nothing to go forward to
+    #expect(nav.ahead.isEmpty)
+    nav.openRandomNote()
+    if case .note = nav.route {} else { Issue.record("no random note") }
+
+    #expect(nav.mentions(of: ["Alpha"], excluding: a).map(\.1.id) == [b])
+    nav.linkMention(Folder.rootID, b, name: "Alpha", title: "Alpha")
+    #expect(s.note(Folder.rootID, b)!.text == "# Beta\n[[Alpha]] came up, #work")
+    #expect(nav.mentions(of: ["Alpha"], excluding: a).isEmpty)
+
+    nav.renameTag("work", to: "#Job")
+    #expect(s.note(Folder.rootID, a)!.text.hasSuffix("#job/meeting") && s.note(Folder.rootID, b)!.text.hasSuffix("#job"))
+    nav.undoLast()
+    #expect(s.note(Folder.rootID, a)!.text.hasSuffix("#work/meeting"))
+}
+
+@MainActor @Test func periodicNotesAndAttachments() throws {
+    Prefs.register()
+    let dir = tempDir()
+    let s = Store(testing: dir)
+    let nav = Nav(store: s)
+    let day = DateComponents(calendar: Calendar(identifier: .gregorian), year: 2026, month: 10, day: 7).date!
+    #expect(Nav.periodTitle(.week, day) == "2026-W41" && Nav.periodTitle(.month, day) == "2026-10")
+    #expect(Nav.expand("w{{week}}", date: day).text.hasPrefix("w"))
+    nav.openPeriodic(.day, date: day)
+    nav.openPeriodic(.week, date: day)
+    nav.openPeriodic(.week, date: day) // found again, not made twice
+    let daily = try #require(s.moveTargets.first { $0.name == "Daily" })
+    #expect(Set(s.folder(daily.id)!.notes.map(\.title)) == [Nav.periodTitle(.day, day), "2026-W41"])
+    #expect(nav.dailyTitles().contains(Nav.periodTitle(.day, day)))
+
+    let att = dir.appendingPathComponent("attachments")
+    try FileManager.default.createDirectory(at: att, withIntermediateDirectories: true)
+    for f in ["used.png", "spare.png", "sealed.png.locked"] { try Data([1]).write(to: att.appendingPathComponent(f)) }
+    _ = s.addNote(to: Folder.rootID, text: "![](attachments/used.png)")
+    let found = Dictionary(uniqueKeysWithValues: nav.attachments().map { ($0.url.lastPathComponent, $0) })
+    #expect(found["used.png"]!.notes.count == 1 && found["spare.png"]!.notes.isEmpty && found["sealed.png.locked"]!.sealed)
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {
@@ -2375,4 +2439,5 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(heights.allSatisfy { $0 <= home + 1 }, "came home past its height: \(heights.map { Int($0) })")
     #expect(abs(c.layout.height - home) <= 1)
 }
+
 

@@ -84,6 +84,10 @@ struct GeneralSettings: View {
     @AppStorage(Prefs.templatesFolder) private var templatesFolder = "Templates"
     @AppStorage(Prefs.dailyFolder) private var dailyFolder = "Daily"
     @AppStorage(Prefs.dailyTemplate) private var dailyTemplate = ""
+    @AppStorage(Prefs.weeklyTemplate) private var weeklyTemplate = ""
+    @AppStorage(Prefs.monthlyTemplate) private var monthlyTemplate = ""
+    @AppStorage(Prefs.weekFormat) private var weekFormat = "YYYY-'W'ww"
+    @AppStorage(Prefs.monthFormat) private var monthFormat = "yyyy-MM"
     @AppStorage(Prefs.dateFormat) private var dateFormat = "yyyy-MM-dd"
     @AppStorage(Prefs.systemCalendar) private var systemCalendar = false
     @AppStorage(Prefs.dateLanguage) private var dateLanguage = ""
@@ -164,12 +168,17 @@ struct GeneralSettings: View {
             Section {
                 TextField("Templates folder", text: $templatesFolder)
                 TextField("Daily notes folder", text: $dailyFolder)
-                Picker("Daily note template", selection: $dailyTemplate) {
-                    Text("None (just the date)").tag("")
-                    // Each title once: two templates with one name would repeat an ID (and pick the same one anyway).
-                    ForEach(NSOrderedSet(array: PanelController.shared?.nav.templates.map(\.title) ?? []).array as! [String], id: \.self) { Text($0).tag($0) }
+                // Each title once: two templates with one name would repeat an ID (and pick the same one anyway).
+                let names = NSOrderedSet(array: PanelController.shared?.nav.templates.map(\.title) ?? []).array as! [String]
+                ForEach([("Daily note template", $dailyTemplate), ("Weekly note template", $weeklyTemplate), ("Monthly note template", $monthlyTemplate)], id: \.0) { title, value in
+                    Picker(title, selection: value) {
+                        Text("None (just the date)").tag("")
+                        ForEach(names, id: \.self) { Text($0).tag($0) }
+                    }
                 }
                 TextField("Date format", text: $dateFormat)
+                TextField("Weekly note title", text: $weekFormat).help("YYYY = the week's year, ww = its number (ISO, from Monday)")
+                TextField("Monthly note title", text: $monthFormat)
                 Picker("Month and day names", selection: $dateLanguage) {
                     Text("This Mac's language").tag("")
                     Text("ไทย").tag("th")
@@ -215,6 +224,7 @@ struct GeneralSettings: View {
                        Prefs.hoverPreview, Prefs.previewDelay, Prefs.previewHideDelay, Prefs.previewWidth, Prefs.undoSeconds, Prefs.showTags,
                        Prefs.codeTab, Prefs.webImages, Prefs.reminders, Prefs.remindAt, Prefs.templatesFolder, Prefs.dailyFolder,
                        Prefs.dailyTemplate, Prefs.dateFormat, Prefs.systemCalendar, Prefs.dateLanguage,
+                       Prefs.weeklyTemplate, Prefs.monthlyTemplate, Prefs.weekFormat, Prefs.monthFormat,
                        Prefs.keepOpen, Prefs.panelOpacity, Prefs.hideFromCapture, Prefs.quickLook, Prefs.linkPreviews, Prefs.selectionBar]
 }
 

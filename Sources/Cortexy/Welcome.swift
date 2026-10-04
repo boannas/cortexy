@@ -158,7 +158,9 @@ enum Welcome {
         - The arrow before a folder opens it in place; the title at the top is a menu of the folders above
         - Deleted things wait in **Recently Deleted** (30 days, set in Settings); Undo right after, or ⌘Z
         - **Archive** takes a note out of its folder and out of search, without deleting it
-        - **⌘[** or ← goes back to where you were
+        - **⌘[** or ← goes back to where you were; **⌘]** goes forward again
+        - Right-click a tag on the home screen → **Rename**: every note changes (a name that exists merges them); a chevron opens a tag's `#tag/sub-tags`
+        - ⌘P → **Show Attachments** lists every file and the notes using it, and clears out the unused ones; **Open a Random Note** rediscovers old ones
 
         Next: [[Find anything]]
         """,
@@ -219,6 +221,10 @@ enum Welcome {
         - Make a note from one: ⋯ → New from Template, ⌘P, or a shortcut of your own
         - In a template: `{{date}}` `{{time}}` `{{weekday}}` `{{folder}}` `{{date:MMMM yyyy}}`, and `{{cursor}}` for where typing starts
         - **⌘D** opens today's note in the folder *Daily* (Settings sets the folder, a template and the date format)
+        - **⇧⌘D** opens a calendar: dots mark days with a note, click any day for its note; it also makes this week's and this month's notes (each can have its own template)
+        - Under a note: what it links to, what links to it, and notes that **mention** it without a link (one click links them)
+        - Put `goal: 500` in a note's frontmatter to see its word count against it
+        - Rest on a version in Version History to see what changed since (added in green, removed in red)
         - Settings → Shortcuts → **Your shortcuts**: keys for "new note from template" (into a folder you pick, or home) or for opening a note — in Cortexy, or from any app
 
         Next: [[Privacy and safety]]
@@ -365,7 +371,9 @@ enum Welcome {
         - ลูกศรหน้าโฟลเดอร์ = กางในหน้าเดิม ชื่อด้านบนคือเมนูของโฟลเดอร์ชั้นบน
         - ของที่ลบจะรออยู่ใน **Recently Deleted** (30 วัน ตั้งได้) กด Undo ทันทีหรือ ⌘Z
         - **Archive** เก็บโน้ตออกจากโฟลเดอร์และผลค้นหา โดยไม่ลบ
-        - **⌘[** หรือ ← ย้อนกลับไปที่เดิม
+        - **⌘[** หรือ ← ย้อนกลับไปที่เดิม · **⌘]** ไปข้างหน้าอีกครั้ง
+        - คลิกขวา tag ที่หน้าแรก → **Rename** เปลี่ยนทุกโน้ต (ถ้าชื่อซ้ำกับ tag ที่มีอยู่จะรวมกัน) · ลูกศรข้าง tag เปิด `#tag/tag-ย่อย`
+        - ⌘P → **Show Attachments** ดูไฟล์แนบทั้งหมดว่าโน้ตไหนใช้ และล้างไฟล์ที่ไม่ได้ใช้ · **Open a Random Note** สุ่มเปิดโน้ตเก่า
 
         ถัดไป: [[ค้นหา]]
         """,
@@ -427,6 +435,10 @@ enum Welcome {
         - สร้างโน้ตจาก template: ⋯ → New from Template, ⌘P หรือคีย์ลัดที่ตั้งเอง
         - ใน template ใช้ `{{date}}` `{{time}}` `{{weekday}}` `{{folder}}` `{{date:d MMMM yyyy}}` และ `{{cursor}}` = ตำแหน่งเริ่มพิมพ์
         - **⌘D** เปิดโน้ตของวันนี้ในโฟลเดอร์ *Daily* (ตั้งชื่อโฟลเดอร์ template และรูปแบบวันที่ได้ใน Settings ตั้งชื่อเดือนเป็นภาษาไทยได้)
+        - **⇧⌘D** เปิดปฏิทิน: จุดคือวันที่มีโน้ต คลิกวันไหนก็ได้เพื่อเปิดโน้ตของวันนั้น และสร้างโน้ตประจำสัปดาห์/เดือนได้ (ตั้ง template แยกได้)
+        - ใต้โน้ตบอกว่าลิงก์ไปไหน ใครลิงก์มา และโน้ตที่**พูดถึง**โน้ตนี้แต่ยังไม่ได้ลิงก์ (คลิกเดียวเพื่อลิงก์)
+        - ใส่ `goal: 500` ใน frontmatter เพื่อดูจำนวนคำเทียบเป้า
+        - พักเมาส์บนเวอร์ชันใน Version History เพื่อดูว่าเปลี่ยนอะไรไปบ้าง (เพิ่ม = เขียว, ลบ = แดง)
         - Settings → Shortcuts → **Your shortcuts**: ตั้งคีย์ลัดเอง เช่น "โน้ตใหม่จาก template" (ลงโฟลเดอร์ที่เลือก หรือหน้าแรก) หรือเปิดโน้ต ใช้ใน Cortexy หรือจากทุกแอป
 
         ถัดไป: [[ความเป็นส่วนตัว]]

@@ -801,6 +801,85 @@ extension MD {
     }
 }
 
+// MARK: Mentions, tags, diffs
+
+extension MD {
+    /// Where `name` (a note's title) appears in `text` as plain words: not inside a `[[link]]`, code or the
+    /// frontmatter. Latin names must be whole words; any name must be at least 3 letters (Thai has no spaces
+    /// between words, so a short one would be found inside others).
+    static func mentionRanges(_ name: String, in text: String) -> [NSRange] {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        guard n.count >= 3, finds(n, in: text) else { return [] }
+        let ns = text as NSString, all = NSRange(location: 0, length: ns.length)
+        let skip = wikiRegex.matches(in: text, range: all).map(\.range) + Styler.code.matches(in: text, range: all).map(\.range)
+            + Styler.codeBlocks(text).map(\.whole) + [NSRange(location: 0, length: frontmatter(text)?.length ?? 0)]
+        let latin = !n.unicodeScalars.contains { (0x0E00...0x0E7F).contains($0.value) }
+        func letter(_ i: Int) -> Bool {
+            guard i >= 0, i < ns.length, let u = Unicode.Scalar(ns.character(at: i)) else { return false }
+            return u.properties.isAlphabetic || CharacterSet.decimalDigits.contains(u)
+        }
+        var out: [NSRange] = [], from = 0
+        while from < ns.length {
+            let r = ns.range(of: n, options: searchOptions(n), range: NSRange(location: from, length: ns.length - from))
+            guard r.location != NSNotFound else { break }
+            if !skip.contains(where: { NSIntersectionRange($0, r).length > 0 }), !latin || (!letter(r.location - 1) && !letter(NSMaxRange(r))) { out.append(r) }
+            from = NSMaxRange(r)
+        }
+        return out
+    }
+
+    /// `#old` and `#old/…` as `#new`, in the text and in the frontmatter's `tags:`.
+    static func renamedTag(_ text: String, from old: String, to new: String) -> String {
+        let out = NSMutableString(string: text)
+        let meta = frontmatter(text)?.length ?? 0
+        for m in tagRegex.matches(in: text, range: NSRange(location: meta, length: out.length - meta)).reversed() {
+            let raw = (text as NSString).substring(with: m.range(at: 1))
+            guard tagName(raw) == old || raw.lowercased().hasPrefix(old + "/") else { continue }
+            out.replaceCharacters(in: NSRange(location: m.range(at: 1).location, length: (old as NSString).length), with: new)
+        }
+        guard meta > 0 else { return out as String }
+        // In the frontmatter: the values of `tags:` (inline or as `- item` lines).
+        var lines = (out.substring(to: meta) as String).components(separatedBy: "\n"), inTags = false
+        let token = try! NSRegularExpression(pattern: #"(^|[\[\s,"'#])"# + NSRegularExpression.escapedPattern(for: old) + #"(?=$|[\]\s,"'/])"#, options: .caseInsensitive)
+        for i in lines.indices.dropFirst() {
+            let l = lines[i]
+            if !l.hasPrefix(" "), !l.hasPrefix("\t"), !l.trimmingCharacters(in: .whitespaces).hasPrefix("-") {
+                inTags = l.lowercased().hasPrefix("tags:") || l.lowercased().hasPrefix("tag:")
+            }
+            guard inTags else { continue }
+            let colon = l.firstIndex(of: ":").map { l.distance(from: l.startIndex, to: $0) + 1 } ?? 0
+            let head = String(l.prefix(colon)), body = String(l.dropFirst(colon))
+            lines[i] = head + token.stringByReplacingMatches(in: body, range: NSRange(location: 0, length: (body as NSString).length), withTemplate: "$1" + NSRegularExpression.escapedTemplate(for: new))
+        }
+        return lines.joined(separator: "\n") + out.substring(from: meta)
+    }
+
+    enum Change: Equatable { case same, added, removed }
+
+    /// Line by line, what changed from `old` to `new`: lines kept, those only in the new text, those gone.
+    static func diffLines(_ old: String, _ new: String) -> [(Change, String)] {
+        let a = old.components(separatedBy: "\n"), b = new.components(separatedBy: "\n")
+        var removed = Set<Int>(), inserted = Set<Int>()
+        for c in b.difference(from: a) {
+            switch c {
+            case .remove(let o, _, _): removed.insert(o)
+            case .insert(let o, _, _): inserted.insert(o)
+            }
+        }
+        var out: [(Change, String)] = [], i = 0, j = 0
+        while i < a.count || j < b.count {
+            if i < a.count, removed.contains(i) { out.append((.removed, a[i])); i += 1 }
+            else if j < b.count, inserted.contains(j) { out.append((.added, b[j])); j += 1 }
+            else if j < b.count { out.append((.same, b[j])); i += 1; j += 1 }
+            else { i += 1 }
+        }
+        return out
+    }
+
+    /// Reading time at about 230 words a minute (rounded up; 0 for an empty note).
+    static func readingMinutes(_ words: Int) -> Int { words == 0 ? 0 : max(1, Int((Double(words) / 230).rounded(.up))) }
+}
+
 // MARK: Search queries
 
 /// What the search box, smart folders and `cortexy://search` understand:

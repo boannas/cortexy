@@ -143,6 +143,7 @@ struct FolderView: View {
     @Bindable var nav: Nav
     let folder: Folder
     @AppStorage(Prefs.showTags) private var showTags = true
+    @Local private var openTags: Set<String> = [] // tags whose sub-tags show in the strip
     @AppStorage(Prefs.trashDays) private var trashDays = 30
 
     private var keepText: String { trashDays > 0 ? "for \(trashDays) days, then go for good" : "until you empty it" }
@@ -242,23 +243,40 @@ struct FolderView: View {
         .contentShape(Rectangle())
     }
 
+    /// Tags as a tree: top-level ones first; a chevron opens a tag's `#tag/…` children after it.
     private func tagStrip(_ tags: [(name: String, count: Int)]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let shown = tags.filter { t in
+            let parts = t.name.split(separator: "/")
+            return parts.count == 1 || (1..<parts.count).allSatisfy { openTags.contains(parts.prefix($0).joined(separator: "/")) }
+        }
+        return VStack(alignment: .leading, spacing: 2) {
             SectionHeader("Tags").padding(.top, 6)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(tags, id: \.name) { t in
-                        Button { nav.openLink(Link.tag(t.name)) } label: {
-                            HStack(spacing: 3) {
-                                Text("#" + t.name).foregroundStyle(Color.cortexyAccentText)
-                                Text("\(t.count)").foregroundStyle(.secondary)
+                    ForEach(shown, id: \.name) { t in
+                        let depth = t.name.split(separator: "/").count - 1
+                        let hasChildren = tags.contains { $0.name.hasPrefix(t.name + "/") }
+                        HStack(spacing: 3) {
+                            Button { nav.openLink(Link.tag(t.name)) } label: {
+                                HStack(spacing: 3) {
+                                    Text(depth == 0 ? "#" + t.name : "/" + t.name.split(separator: "/").last!).foregroundStyle(Color.cortexyAccentText)
+                                    Text("\(t.count)").foregroundStyle(.secondary)
+                                }
                             }
-                                .font(.system(size: 12.5))
-                                .padding(.horizontal, 9)
-                                .frame(height: 24)
-                                .background(.primary.opacity(0.07), in: .capsule)
+                            .buttonStyle(.plain)
+                            if hasChildren {
+                                Button { if openTags.contains(t.name) { openTags.remove(t.name) } else { openTags.insert(t.name) } } label: {
+                                    Image(systemName: openTags.contains(t.name) ? "chevron.left" : "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help(openTags.contains(t.name) ? "Hide its sub-tags" : "Show its sub-tags")
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .font(.system(size: 12.5))
+                        .padding(.horizontal, 9)
+                        .frame(height: 24)
+                        .background(.primary.opacity(depth == 0 ? 0.07 : 0.04), in: .capsule)
+                        .contextMenu { Button("Rename #\(t.name)…") { nav.askRenameTag(t.name) } }
                     }
                 }
                 .padding(.horizontal, 4)

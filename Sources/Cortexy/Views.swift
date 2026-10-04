@@ -68,6 +68,10 @@ struct RootView: View {
         }
         .overlay { if nav.palette != nil { PaletteView(nav: nav).transition(.opacity) } }
         .overlay { if let n = nav.historyNote { HistoryView(nav: nav, nid: n).transition(.opacity) } }
+        .overlay { if nav.calendarShown { CalendarView(nav: nav).transition(.opacity) } }
+        .overlay { if nav.attachmentsShown { AttachmentsView(nav: nav).transition(.opacity) } }
+        .animation(Motion.quick, value: nav.calendarShown)
+        .animation(Motion.quick, value: nav.attachmentsShown)
         .animation(Motion.quick, value: nav.palette != nil)
         .animation(Motion.quick, value: nav.historyNote)
         .clipped() // nothing shows past the card while it springs (a page fading out, ⌘O); a rounded clip cost frames
@@ -82,7 +86,7 @@ struct RootView: View {
         .animation(Motion.standard, value: nav.marked.isEmpty)
         .animation(Motion.quick, value: searchFocused && !nav.searchHints(nav.search).isEmpty) // the hint list fades in and out
         // ⌘O / ⌘P and Version History float over the page: room for them even over a short one.
-        .onChange(of: nav.palette != nil || nav.historyNote != nil) { _, open in nav.panel?.needs(atLeast: open ? 480 : 0) }
+        .onChange(of: nav.palette != nil || nav.historyNote != nil || nav.calendarShown || nav.attachmentsShown) { _, open in nav.panel?.needs(atLeast: open ? 480 : 0) }
         .onChange(of: nav.searchFocus) {
             // From a note (⇧⌘F): out to its folder, where the search box is. Not Back, which went to wherever the
             // note was reached from (another note, say: the search box still wasn't there).
@@ -138,6 +142,7 @@ struct Header: View {
         let showsBack = nav.route != .home || !nav.search.isEmpty
         HStack(spacing: 2) {
             if showsBack { ChromeButton(symbol: "chevron.left", help: "Back (⌘[)") { nav.back() } }
+            if !nav.ahead.isEmpty { ChromeButton(symbol: "chevron.right", help: "Forward (⌘])") { nav.forward() } }
             titleView
                 .font(.system(size: 15, weight: .semibold))
                 .padding(.leading, showsBack ? 2 : 8)
@@ -230,10 +235,15 @@ struct Header: View {
 /// take a third of a second on a 5,000-line note.
 struct WordCount: View {
     let text: String
+    var goal: Int? // `goal: 500` in the note's frontmatter
     @Local private var count: Int?
 
     var body: some View {
-        Text(count.map { MD.plural($0, "word") } ?? "…")
+        Text(count.map { n in
+            let minutes = MD.readingMinutes(n)
+            let words = goal.map { "\(n) / \($0) words" + (n >= $0 ? " ✓" : "") } ?? MD.plural(n, "word")
+            return minutes > 1 ? words + " · \(minutes) min read" : words
+        } ?? "…")
             .task(id: text) {
                 try? await Task.sleep(for: .milliseconds(count == nil ? 0 : 500))
                 guard !Task.isCancelled else { return }
@@ -454,12 +464,12 @@ struct EditorView: View {
             .background { CardBackground(color: note.color) }
             .padding(.horizontal, 10)
             .padding(.top, 2)
-            if look.noteInfo || !links.isEmpty {
+            if look.noteInfo || !links.isEmpty || !mentions.isEmpty || !MD.wikiLinks(note.text).isEmpty {
                 HStack(spacing: 4) {
                     if look.noteInfo {
                         Text(note.modified, format: .relative(presentation: .named))
                         Text("·")
-                        WordCount(text: nav.unlocked[note.id] ?? note.text)
+                        WordCount(text: nav.unlocked[note.id] ?? note.text, goal: MD.properties(note.text)["goal"]?.first.flatMap { Int($0) })
                     }
                     if !links.isEmpty {
                         if look.noteInfo { Text("·") }
@@ -474,6 +484,33 @@ struct EditorView: View {
                         .fixedSize()
                         .help("Notes with a [[link]] to this one")
                     }
+                    let outgoing = Array(NSOrderedSet(array: MD.wikiLinks(nav.unlocked[nid] ?? note.text).map { MD.splitLink($0).title }.filter { !$0.isEmpty }).array as! [String])
+                    if !outgoing.isEmpty {
+                        Text("·")
+                        Menu {
+                            ForEach(outgoing, id: \.self) { t in
+                                Button(nav.resolve(title: t) == nil ? "\(t) (new)" : t) { nav.openLink(Link.note(t)) }
+                            }
+                        } label: { Label("\(outgoing.count) link\(outgoing.count == 1 ? "" : "s")", systemImage: "arrow.up.right").labelStyle(.titleAndIcon) }
+                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                        .help("Notes this one links to")
+                    }
+                    if !mentions.isEmpty {
+                        Text("·")
+                        Menu {
+                            ForEach(mentions, id: \.1.id) { f, n, name in
+                                Menu(n.title) {
+                                    Button("Open") { nav.route = .note(f.id, n.id) }
+                                    Button("Link It Here") {
+                                        nav.linkMention(f.id, n.id, name: name, title: note.title)
+                                        mentions.removeAll { $0.1.id == n.id }
+                                    }
+                                }
+                            }
+                        } label: { Label("\(mentions.count) mention\(mentions.count == 1 ? "" : "s")", systemImage: "text.magnifyingglass").labelStyle(.titleAndIcon) }
+                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                        .help("Notes that name this one without linking to it")
+                    }
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -483,10 +520,15 @@ struct EditorView: View {
             }
         }
         // Backlinks only change when this note's title or aliases do (other notes aren't edited meanwhile).
-        .task(id: [note.title] + MD.aliases(note.text)) { links = nav.backlinks(to: [note.title] + MD.aliases(note.text), excluding: nid) }
+        .task(id: [note.title] + MD.aliases(note.text)) {
+            let names = [note.title] + MD.aliases(note.text)
+            links = nav.backlinks(to: names, excluding: nid)
+            mentions = note.lock == nil ? nav.mentions(of: names, excluding: nid) : []
+        }
     }
 
     @Local private var links: [(Folder, Note)] = []
+    @Local private var mentions: [(Folder, Note, String)] = []
 }
 
 /// A note's kept versions, newest first. Rest on one to read it beside the panel; Restore puts it back.
@@ -534,7 +576,11 @@ struct HistoryView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(v.date, format: .relative(presentation: .named))  ·  \(Nav.show(v.date, time: true))")
                     .font(.system(size: 12.5, weight: .medium))
-                Text(MD.title(v.text) + "  ·  " + MD.plural(v.text.count, "character")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                let now = nav.store.folderOf(nid).flatMap { nav.store.note($0.id, nid)?.text } ?? ""
+                let diff = MD.diffLines(v.text, now)
+                let added = diff.filter { $0.0 == .added }.count, removed = diff.filter { $0.0 == .removed }.count
+                Text(MD.title(v.text) + "  ·  " + (added + removed == 0 ? "same as now" : "+\(added) −\(removed) lines since"))
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
             Button("Restore") { nav.restoreVersion(nid, v) }.buttonStyle(.plain).foregroundStyle(Color.cortexyAccentText).font(.system(size: 12, weight: .semibold))
@@ -544,6 +590,148 @@ struct HistoryView: View {
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.primary.opacity(0.04)))
         .contentShape(Rectangle())
         .previewOnHover(.version(nid, i))
+    }
+}
+
+/// An overlay card like Version History's: dims the page, closes on a click outside or Esc.
+struct OverlayCard<Content: View>: View {
+    let title: String
+    var detail = ""
+    let close: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.black.opacity(0.12).onTapGesture(perform: close)
+            VStack(spacing: 0) {
+                HStack {
+                    Text(title).font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    if !detail.isEmpty { Text(detail).font(.system(size: 11)).foregroundStyle(.secondary) }
+                    MiniButton(symbol: "xmark", help: "Close (Esc)", action: close)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 40)
+                Divider()
+                content()
+            }
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: .black.opacity(0.25), radius: 18, y: 8)
+            .padding(.horizontal, 12)
+            .padding(.top, 46)
+        }
+    }
+}
+
+/// ⇧⌘D: a month of days; a dot marks those with a daily note. Click a day for its note (made if it's not there).
+struct CalendarView: View {
+    let nav: Nav
+    @Local private var month = Date()
+
+    var body: some View {
+        let cal = Calendar(identifier: .gregorian)
+        let start = cal.date(from: cal.dateComponents([.year, .month], from: month))!
+        let days = cal.range(of: .day, in: .month, for: start)!.count
+        let lead = (cal.component(.weekday, from: start) - Calendar.current.firstWeekday + 7) % 7
+        let have = nav.dailyTitles()
+        let symbols = Nav.dateFormatter().veryShortStandaloneWeekdaySymbols ?? []
+        let ordered = (0..<7).map { symbols.isEmpty ? "" : symbols[(Calendar.current.firstWeekday - 1 + $0) % 7] }
+        OverlayCard(title: "Daily Notes", close: { nav.calendarShown = false }) {
+            VStack(spacing: 8) {
+                HStack {
+                    MiniButton(symbol: "chevron.left", help: "Previous Month") { month = cal.date(byAdding: .month, value: -1, to: month)! }
+                    Spacer()
+                    Text(Nav.expand("{{date:LLLL yyyy}}", date: start).text).font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    MiniButton(symbol: "chevron.right", help: "Next Month") { month = cal.date(byAdding: .month, value: 1, to: month)! }
+                }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 4) {
+                    // Separate IDs for the three runs: shared ones (1…6) made the grid drop the month's first days.
+                    ForEach(0..<7, id: \.self) { Text(ordered[$0]).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).id("h\($0)") }
+                    ForEach(0..<lead, id: \.self) { Color.clear.frame(height: 30).id("l\($0)") }
+                    ForEach(1...days, id: \.self) { d in
+                        let date = cal.date(byAdding: .day, value: d - 1, to: start)!
+                        let today = cal.isDateInToday(date), has = have.contains(Nav.periodTitle(.day, date))
+                        Button {
+                            nav.calendarShown = false
+                            nav.openPeriodic(.day, date: date)
+                        } label: {
+                            VStack(spacing: 2) {
+                                Text("\(d)").font(.system(size: 12, weight: today ? .bold : .regular)).foregroundStyle(today ? Color.cortexyAccentText : .primary)
+                                Circle().fill(has ? Color.cortexyAccent : .clear).frame(width: 4, height: 4)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 30)
+                            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(today ? Color.cortexyAccent.opacity(0.14) : .clear))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(has ? "Open this day's note" : "Make this day's note")
+                    }
+                }
+                HStack {
+                    Button("This Week") { nav.calendarShown = false; nav.openPeriodic(.week) }
+                    Button("\(Nav.expand("{{date:LLLL}}", date: start).text) Note") { nav.calendarShown = false; nav.openPeriodic(.month, date: start) }
+                    Spacer()
+                    Button("Today") { month = Date() }
+                }
+                .font(.system(size: 12))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.cortexyAccentText)
+            }
+            .padding(12)
+        }
+    }
+}
+
+/// Every attached file, the notes that use it, and those no note uses any more (they can go to the Trash).
+struct AttachmentsView: View {
+    let nav: Nav
+    @Local private var items: [Nav.Attachment] = []
+
+    var body: some View {
+        let unused = items.filter { $0.notes.isEmpty && !$0.sealed }
+        OverlayCard(title: "Attachments", detail: MD.plural(items.count, "file"), close: { nav.attachmentsShown = false }) {
+            if items.isEmpty {
+                Text("No attachments yet. Images and files you add to notes are kept here.").font(.system(size: 12)).foregroundStyle(.secondary).padding(14)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) { ForEach(items) { row($0) } }.padding(6)
+                }
+                .frame(maxHeight: 380)
+                if !unused.isEmpty {
+                    Divider()
+                    Button("Move \(MD.plural(unused.count, "Unused File")) to the Trash") {
+                        for a in unused { try? FileManager.default.trashItem(at: a.url, resultingItemURL: nil) }
+                        items = nav.attachments()
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Color.cortexyAccentText).font(.system(size: 12, weight: .semibold)).padding(10)
+                }
+            }
+        }
+        .onAppear { items = nav.attachments() }
+    }
+
+    private func row(_ a: Nav.Attachment) -> some View {
+        HStack(spacing: 8) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: a.url.path)).resizable().frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(a.url.lastPathComponent).font(.system(size: 12.5)).lineLimit(1).truncationMode(.middle)
+                Text(a.sealed ? "In a locked note" : a.notes.isEmpty ? "Not used by any note" : a.notes.map(\.1.title).joined(separator: ", "))
+                    .font(.system(size: 11)).foregroundStyle(a.notes.isEmpty && !a.sealed ? .orange : .secondary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            MiniButton(symbol: "folder", help: "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([a.url]) }
+        }
+        .padding(.horizontal, 8)
+        .frame(minHeight: 40)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.primary.opacity(0.04)))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard let (f, n) = a.notes.first else { return }
+            nav.attachmentsShown = false
+            nav.search = ""
+            nav.route = .note(f, n.id)
+        }
     }
 }
 

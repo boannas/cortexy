@@ -11,6 +11,7 @@ final class GraphModel {
         let title: String
         let note: UUID?
         let color: NoteColor
+        var group = ""   // its folder, or its first tag: what "Color by" groups it by
         var p: CGPoint
         var v = CGVector.zero
         var degree = 0
@@ -26,7 +27,7 @@ final class GraphModel {
 
     /// From the notes. Nodes already there keep their place, so the picture doesn't jump after an edit
     /// (and an edit that changes no link leaves it resting).
-    func rebuild(_ store: Store, tags: Bool, unlinked: Bool, around: UUID?, depth: Int = 2) {
+    func rebuild(_ store: Store, tags: Bool, unlinked: Bool, around: UUID?, depth: Int = 2, groupBy: GraphState.ColorBy = .note) {
         let old = Dictionary(nodes.map { ($0.id, $0.p) }) { a, _ in a }
         let oldLinks = Set(edges.map { [nodes[$0.0].id, nodes[$0.1].id].sorted() })
         let notes = store.liveFolders.flatMap { f in f.notes.filter { !$0.archived }.map { (f.id, $0) } }
@@ -38,7 +39,10 @@ final class GraphModel {
         }
         for (_, n) in notes { for a in MD.aliases(n.text) where byTitle[a.lowercased()] == nil { byTitle[a.lowercased()] = n } } // titles first
         func target(_ t: String) -> Note? { byTitle[t.lowercased()] ?? (t.contains("#") ? byTitle[MD.splitLink(t).title.lowercased()] : nil) }
-        var list = notes.map { Node(id: $0.1.id.uuidString, title: $0.1.title, note: $0.1.id, color: $0.1.color, p: .zero) }
+        var list = notes.map { f, n in
+            Node(id: n.id.uuidString, title: n.title, note: n.id, color: n.color,
+                 group: groupBy == .folder ? store.folder(f)?.name ?? "" : groupBy == .tag ? (MD.tags(n.text).first.map { "#" + $0 } ?? "") : "", p: .zero)
+        }
         var index = Dictionary(list.enumerated().map { ($0.element.id, $0.offset) }) { a, _ in a }
         var pairs = Set<[Int]>()
         func link(_ a: Int, _ b: Int) { if a != b { pairs.insert([min(a, b), max(a, b)]) } }
@@ -173,6 +177,8 @@ final class GraphModel {
     var local = false
     var tags = false
     var unlinked = true
+    enum ColorBy: String, CaseIterable { case note = "Note Color", folder = "Folder", tag = "First Tag" }
+    var colorBy = ColorBy.note
     var hover: Int?
     var frame = 0      // bumped to redraw while the simulation is resting
     var size = CGSize.zero    // the canvas
@@ -237,6 +243,7 @@ final class GraphWindow: NSObject {
 }
 
 struct GraphView: View {
+    static let palette: [Color] = [.blue, .orange, .green, .pink, .purple, .yellow, .red, .indigo, .mint, .brown, .cyan, .teal]
     let nav: Nav
     @Bindable var state: GraphState
     @Local private var model = GraphModel()
@@ -276,6 +283,7 @@ struct GraphView: View {
                 }
                 .onChange(of: state.frame) { running = true } // redraw after zooms and hovers
             }
+            .overlay(alignment: .bottomLeading) { if state.colorBy != .note { legend } }
             .onGeometryChange(for: CGSize.self) { $0.size } action: { state.size = $0 }
             .background(theme.panelColor ?? .clear)
         }
@@ -289,7 +297,23 @@ struct GraphView: View {
         }
         .onChange(of: state.shown) { if state.shown { rebuild() } } // catch up on edits made while it was closed
         .onChange(of: [state.tags, state.unlinked, state.local]) { rebuild(fit: true) }
+        .onChange(of: state.colorBy) { rebuild() }
         .onChange(of: state.focus) { rebuild(fit: true) }
+    }
+
+    /// What each color stands for (the first dozen groups).
+    private var legend: some View {
+        let _ = state.frame
+        let groups = Set(model.nodes.map(\.group)).filter { !$0.isEmpty }.sorted()
+        return VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(groups.prefix(12).enumerated()), id: \.offset) { i, g in
+                Label { Text(g).lineLimit(1) } icon: { Circle().fill(Self.palette[i % Self.palette.count]).frame(width: 8, height: 8) }
+            }
+        }
+        .font(.system(size: 11))
+        .padding(8)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .padding(10)
     }
 
     private var toolbar: some View {
@@ -304,6 +328,8 @@ struct GraphView: View {
             .disabled(focusTitle == nil)
             Toggle("Tags", isOn: $state.tags).toggleStyle(.checkbox)
             Toggle("Unlinked notes", isOn: $state.unlinked).toggleStyle(.checkbox)
+            Picker("Color by", selection: $state.colorBy) { ForEach(GraphState.ColorBy.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+                .fixedSize()
             Spacer(minLength: 8)
             Text(MD.plural(model.nodes.count, "node") + " · " + MD.plural(model.edges.count, "link")).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
             MiniButton(symbol: "minus.magnifyingglass", help: "Zoom Out") { state.zoom(1 / 1.25) }
@@ -321,7 +347,7 @@ struct GraphView: View {
     private func rebuild(fit: Bool = false) {
         let fresh = model.nodes.isEmpty
         state.hover = nil // its index may not mean the same node any more
-        model.rebuild(nav.store, tags: state.tags, unlinked: state.unlinked, around: state.local ? state.focus : nil)
+        model.rebuild(nav.store, tags: state.tags, unlinked: state.unlinked, around: state.local ? state.focus : nil, groupBy: state.colorBy)
         if fresh { model.run(400) } // the first look: already laid out
         if fresh || fit { DispatchQueue.main.async { state.fit(model.bounds) } }
         state.frame += 1 // titles and colors may have changed even if the links didn't
@@ -351,6 +377,7 @@ struct GraphView: View {
         let open: UUID? = if case .note(_, let n) = nav.route { n } else { nil }
         func lit(_ i: Int) -> Bool { hover == nil || i == hover || near.contains(i) }
         let accent = Themes.shared.current.accentColor ?? Color(nsColor: .controlAccentColor) // not dimmed when the window isn't key
+        let groups = Dictionary(uniqueKeysWithValues: Set(model.nodes.map(\.group)).filter { !$0.isEmpty }.sorted().enumerated().map { ($1, $0) })
 
         for (a, b) in model.edges {
             var line = Path()
@@ -362,7 +389,8 @@ struct GraphView: View {
         for (i, n) in model.nodes.enumerated() {
             let c = screen(n.p, size), r = GraphModel.radius(n) * max(0.6, min(1.6, state.scale))
             let dot = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
-            let fill: Color = n.note == nil ? .teal : n.color.color ?? accent
+            let fill: Color = n.note == nil ? .teal : state.colorBy == .note ? n.color.color ?? accent
+                : n.group.isEmpty ? .gray : GraphView.palette[(groups[n.group] ?? 0) % GraphView.palette.count]
             ctx.opacity = lit(i) ? 1 : 0.25
             ctx.fill(dot, with: .color(fill))
             if n.note == open, open != nil { ctx.stroke(dot.insetBy(-3), with: .color(.primary), lineWidth: 1.5) }
