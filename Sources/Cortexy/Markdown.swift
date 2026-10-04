@@ -1100,6 +1100,17 @@ enum Calc {
     }
 }
 
+// MARK: Attachments named in a note
+
+extension MD {
+    /// The `attachments/…` files a note's text points at (images and file links).
+    static func attachmentNames(_ text: String) -> [String] {
+        guard text.contains("attachments/") else { return [] }
+        let re = try! NSRegularExpression(pattern: #"\]\((?:\.\./)*attachments/([^)\s]+)\)"#)
+        return re.matches(in: text, range: NSRange(location: 0, length: (text as NSString).length)).map { (text as NSString).substring(with: $0.range(at: 1)) }
+    }
+}
+
 // MARK: Search queries
 
 /// What the search box, smart folders and `cortexy://search` understand:

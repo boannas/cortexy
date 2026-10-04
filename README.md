@@ -127,7 +127,10 @@ Version History แสดง **diff** กับปัจจุบัน · เ�
 
 **ข้อมูล**: บันทึกอัตโนมัติ · backup รายวันเก็บ 14 วัน · ไฟล์เสียจะถูกเก็บแยกไว้ ไม่ถูกเขียนทับ ·
 เลือกโฟลเดอร์เก็บข้อมูลเองได้ → วางใน **iCloud Drive / OneDrive / Dropbox เพื่อ sync หลายเครื่อง**
-(ถ้าแก้พร้อมกัน อีกฝั่งจะถูกเก็บเป็นไฟล์ conflict) · export ทุกโน้ตเป็นไฟล์ `.md` · export/copy โน้ตเป็นรูป ·
+(ถ้าแก้พร้อมกัน อีกฝั่งจะถูกเก็บเป็นไฟล์ conflict) · export ทุกโน้ตเป็นไฟล์ `.md` · **Markdown mirror** (Settings → Data): สำเนา .md ทุกโน้ตที่อัปเดตเองทุกครั้งที่บันทึก
+(ค่าเริ่มต้น `Markdown/` ในโฟลเดอร์ข้อมูล, เขียนเฉพาะไฟล์ที่เปลี่ยน, ไม่มีโน้ตที่ล็อก, แก้ในสำเนาจะถูกเขียนทับ) ·
+**Import** โฟลเดอร์ Markdown (Obsidian vault, Bear/Apple Notes export, TextBundle: โฟลเดอร์ย่อย, frontmatter, รูป `![[…]]`/`![](…)`, ลิงก์ .md → `[[…]]`) ·
+**Spotlight** ค้นเจอโน้ต (ไม่รวมโน้ตที่ล็อก) · export/copy โน้ตเป็นรูป ·
 ไม่มี analytics / telemetry
 
 ## คีย์ลัด
@@ -180,7 +183,7 @@ PDF แสดงหน้าแรก
 ## ข้อมูลอยู่ที่ไหน
 
 ค่าเริ่มต้น `~/Library/Application Support/Cortexy/` — `cortexy.json` (โน้ตทั้งหมด), `attachments/` (รูป),
-`Backups/` — เปลี่ยนได้ที่ Settings → Data
+`Backups/`, `History/` (เวอร์ชันของแต่ละโน้ต), `OCR/` (ข้อความที่อ่านจากรูป สำหรับค้นหา), `Markdown/` (ถ้าเปิด mirror) — เปลี่ยนได้ที่ Settings → Data
 
 ## ข้อจำกัดเมื่อไม่มี Xcode / Apple Developer account
 

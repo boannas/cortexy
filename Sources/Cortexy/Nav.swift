@@ -1123,6 +1123,7 @@ import UniformTypeIdentifiers
             cmd("Daily Notes Calendar", "calendar.badge.clock") { [weak self] in self?.calendarShown = true },
             cmd("Open a Random Note", "shuffle") { [weak self] in self?.openRandomNote() },
             cmd("Show Attachments", "paperclip") { [weak self] in self?.attachmentsShown = true },
+            cmd("Import Markdown Folder…", "square.and.arrow.down") { [weak self] in self?.importMarkdownFolder() },
             cmd("Go Home", "house") { [weak self] in self?.search = ""; self?.route = .home },
             cmd("Show Archive", "archivebox") { [weak self] in self?.search = ""; self?.route = .archive },
             cmd("Show Upcoming", "calendar") { [weak self] in self?.search = ""; self?.route = .upcoming },
@@ -1276,6 +1277,23 @@ import UniformTypeIdentifiers
     }
 
     /// Hides the panel, lets the user drag out a region, and drops the capture into the open note.
+    /// Asks for a folder of Markdown and brings its notes in (see `Store.importMarkdown`), then opens the new folder.
+    func importMarkdownFolder() {
+        let url: URL? = PanelController.shared?.modal {
+            let p = NSOpenPanel()
+            p.canChooseDirectories = true
+            p.canChooseFiles = false
+            p.prompt = "Import"
+            p.message = "Choose an Obsidian vault, a Bear or Apple Notes Markdown export, or any folder of .md files"
+            return p.runModal() == .OK ? p.url : nil
+        } ?? nil
+        guard let url else { return }
+        let (fid, count) = store.importMarkdown(from: url)
+        search = ""
+        route = .folder(fid)
+        flash("Imported \(MD.plural(count, "note")) into “\(url.lastPathComponent)”")
+    }
+
     /// A screenshot's text instead of the picture (read on this Mac).
     func insertScreenshotText() { insertScreenshot(asText: true) }
 

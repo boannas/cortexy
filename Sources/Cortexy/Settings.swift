@@ -770,6 +770,9 @@ struct DataSettings: View {
     @AppStorage(Prefs.versionsKept) private var versionsKept = 50
     @AppStorage(Prefs.touchID) private var touchID = false
     @AppStorage(Prefs.lockOnHide) private var lockOnHide = true
+    @AppStorage(Prefs.mirror) private var mirror = false
+    @AppStorage(Prefs.mirrorDirectory) private var mirrorDirectory = ""
+    @AppStorage(Prefs.spotlight) private var spotlight = true
 
     var body: some View {
         let dir = PanelController.shared?.store.directory ?? Store.configuredDirectory
@@ -841,14 +844,45 @@ struct DataSettings: View {
                     }
                 }
                 LabeledContent("All notes as Markdown files") { Button("Export…", action: export) }
+                LabeledContent("Notes from a folder of Markdown") {
+                    Button("Import…") { PanelController.shared?.nav.importMarkdownFolder() }
+                        .help("An Obsidian vault, Bear's or Apple Notes' Markdown export, or any folder of .md files")
+                }
                 if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
+            }
+            Section {
+                Toggle("Keep a Markdown copy of every note", isOn: $mirror)
+                    .onChange(of: mirror) { if mirror { PanelController.shared?.store.updateMirror() } }
+                if mirror {
+                    LabeledContent("Copy folder") {
+                        HStack {
+                            Text(PanelController.shared?.store.mirrorDirectory.path ?? "").lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                            Button("Change…") {
+                                let p = NSOpenPanel()
+                                p.canChooseDirectories = true
+                                p.canChooseFiles = false
+                                p.canCreateDirectories = true
+                                p.prompt = "Use Folder"
+                                if p.runModal() == .OK, let url = p.url { mirrorDirectory = url.path; PanelController.shared?.store.updateMirror() }
+                            }
+                            Button("Show") { if let d = PanelController.shared?.store.mirrorDirectory { NSWorkspace.shared.open(d) } }
+                        }
+                    }
+                }
+                Toggle("Show notes in Spotlight", isOn: $spotlight)
+                    .onChange(of: spotlight) { if let s = PanelController.shared?.store { SpotlightIndex.sync(s) } }
+            } header: {
+                Text("Other Apps")
+            } footer: {
+                Text("The copy is plain .md files, one per note in folders like yours, rewritten whenever a note changes: open it in Obsidian, iA Writer, an AI tool or git. Edits made there are written over. Locked notes are never copied or put in Spotlight.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")
                 LabeledContent("Scripting", value: "cortexy:// links · AppleScript · Services menu")
             }
             // Not the notes folder, Touch ID or the password: those aren't settings to undo by accident.
-            RestoreDefaults(keys: [Prefs.trashDays, Prefs.backupsKept, Prefs.versionsKept, Prefs.lockOnHide])
+            RestoreDefaults(keys: [Prefs.trashDays, Prefs.backupsKept, Prefs.versionsKept, Prefs.lockOnHide, Prefs.mirror, Prefs.mirrorDirectory, Prefs.spotlight])
         }
         .formStyle(.grouped)
     }

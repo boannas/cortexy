@@ -104,6 +104,8 @@ enum Prefs {
     static let linkPreviews = "linkPreviews"           // pasted links get their page's title; resting on one shows the page's card
     static let selectionBar = "selectionBar"           // the formatting bar over selected text
     static let captureKey = "hotkey.capture", captureTarget = "captureTarget" // the capture box, and where it adds: inbox | today
+    static let mirror = "mirror", mirrorDirectory = "mirrorDirectory" // a Markdown copy of the notes, kept up to date ("" = Markdown in the data folder)
+    static let spotlight = "spotlight"                                // notes in Spotlight
     static let weekFormat = "weekFormat", monthFormat = "monthFormat"             // titles of weekly and monthly notes
     static let weeklyTemplate = "weeklyTemplate", monthlyTemplate = "monthlyTemplate"
 
@@ -117,7 +119,7 @@ enum Prefs {
         codeTab: 4, trashDays: 30, backupsKept: 14,
         templatesFolder: "Templates", dailyFolder: "Daily", dailyTemplate: "", dateFormat: "yyyy-MM-dd", todayKey: "", systemCalendar: false, versionsKept: 50, webImages: false, reminders: true, remindAt: 9, touchID: false, lockOnHide: true,
         keepOpen: false, panelOpacity: 1.0, hideFromCapture: false, quickLook: true, linkPreviews: true, selectionBar: true,
-        captureKey: "", captureTarget: "inbox", weekFormat: "YYYY-'W'ww", monthFormat: "yyyy-MM", weeklyTemplate: "", monthlyTemplate: "",
+        captureKey: "", captureTarget: "inbox", mirror: false, mirrorDirectory: "", spotlight: true, weekFormat: "YYYY-'W'ww", monthFormat: "yyyy-MM", weeklyTemplate: "", monthlyTemplate: "",
         toggleKey: HotKeySpec(keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), display: "⌃⌥N").encoded,
         newNoteKey: "",
     ]
@@ -200,7 +202,12 @@ final class PanelController: NSObject {
 
         registerHotKeys()
         openBar.update(visible: true)
-        store.onSaved = { [weak self] in self?.nav.scheduleReminders() }
+        store.onSaved = { [weak self] in
+            guard let self else { return }
+            nav.scheduleReminders()
+            store.updateMirror()
+            SpotlightIndex.update(store)
+        }
         store.onMerged = { [weak self] in self?.nav.flash("Combined with edits from another Mac") }
         // Locked notes lock again when the Mac sleeps or the screen locks.
         for name in [NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {

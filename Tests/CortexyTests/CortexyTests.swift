@@ -1966,6 +1966,62 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(a.bounds.height > 100) // a page, not a one-line chip
 }
 
+/// The Markdown mirror: a file per note in folders like the app's, rewritten only when changed, files of
+/// removed notes deleted, attachments copied; locked notes and locked folders never written.
+@MainActor @Test func markdownMirror() throws {
+    let dir = tempDir(), out = tempDir()
+    let s = Store(testing: dir)
+    let work = s.addFolder("Work")
+    let plan = s.addNote(to: work, text: "# Plan\n![](attachments/p.png)")!
+    _ = s.addNote(to: work, text: "# Plan\nsecond with the same title")
+    let secret = s.addNote(to: Folder.rootID, text: "# Secret\nx")!
+    s.updateNote(Folder.rootID, secret) { $0.lock = "v1:x"; $0.lockedTitle = "Secret"; $0.text = "" }
+    let vault = s.addFolder("Vault")
+    s.updateFolder(vault) { $0.locked = true }
+    _ = s.addNote(to: vault, text: "# Inside a locked folder")
+    try FileManager.default.createDirectory(at: s.attachmentsDirectory, withIntermediateDirectories: true)
+    try Data([1, 2]).write(to: s.attachmentsDirectory.appendingPathComponent("p.png"))
+
+    let p = s.mirrorPlan()
+    #expect(Set(p.keys) == ["Welcome.md", "Work/Plan.md", "Work/Plan 2.md"])
+    #expect(p["Work/Plan.md"] == "# Plan\n![](../attachments/p.png)")
+    Store.syncMirror(p, attachments: s.attachmentsDirectory, to: out)
+    let fm = FileManager.default
+    #expect(fm.fileExists(atPath: out.appendingPathComponent("Work/Plan 2.md").path) && fm.fileExists(atPath: out.appendingPathComponent("attachments/p.png").path))
+    let stamp = try fm.attributesOfItem(atPath: out.appendingPathComponent("Welcome.md").path)[.modificationDate] as! Date
+
+    s.updateNote(work, plan) { $0.text = "# Renamed\nno picture" }
+    Thread.sleep(forTimeInterval: 1.1) // file dates have second precision
+    Store.syncMirror(s.mirrorPlan(), attachments: s.attachmentsDirectory, to: out)
+    #expect(fm.fileExists(atPath: out.appendingPathComponent("Work/Renamed.md").path))
+    #expect(!fm.fileExists(atPath: out.appendingPathComponent("attachments/p.png").path)) // no note shows it now
+    #expect(try fm.attributesOfItem(atPath: out.appendingPathComponent("Welcome.md").path)[.modificationDate] as! Date == stamp) // unchanged: not rewritten
+    let left = Set(fm.subpaths(atPath: out.path)!.filter { $0.hasSuffix(".md") })
+    #expect(left == ["Welcome.md", "Work/Renamed.md", "Work/Plan 2.md"] || left == ["Welcome.md", "Work/Renamed.md", "Work/Plan.md"])
+}
+
+/// A folder of Markdown comes in as notes: subfolders as folders, frontmatter kept, images copied (both
+/// `![](rel)` and `![[name]]`), links to other .md files as [[links]], the file name as the title.
+@MainActor @Test func importingAMarkdownFolder() throws {
+    let s = Store(testing: tempDir())
+    let vault = tempDir().appendingPathComponent("My Vault")
+    let fm = FileManager.default
+    for d in ["Projects", "assets", ".obsidian"] { try fm.createDirectory(at: vault.appendingPathComponent(d), withIntermediateDirectories: true) }
+    try Data([1]).write(to: vault.appendingPathComponent("assets/pic.png"))
+    try "---\ntags: [x]\n---\nBody with ![[pic.png|200]] and [the plan](Projects/Plan.md)".write(to: vault.appendingPathComponent("Home.md"), atomically: true, encoding: .utf8)
+    try "# Plan\n![chart](../assets/pic.png)".write(to: vault.appendingPathComponent("Projects/Plan.md"), atomically: true, encoding: .utf8)
+    try "{}".write(to: vault.appendingPathComponent(".obsidian/app.json"), atomically: true, encoding: .utf8)
+    let (fid, count) = s.importMarkdown(from: vault)
+    #expect(count == 2 && s.folder(fid)?.name == "My Vault")
+    let home = try #require(s.folder(fid)?.notes.first)
+    #expect(home.title == "Home" && MD.frontmatter(home.text) != nil && MD.tags(home.text) == ["x"])
+    #expect(home.text.contains("[[Plan|the plan]]"))
+    #expect(home.text.range(of: #"!\[pic\|200\]\(attachments/[^)]+\.png\)"#, options: .regularExpression) != nil)
+    let projects = try #require(s.subfolders(fid).first { $0.name == "Projects" })
+    #expect(s.subfolders(fid).count == 1) // "assets" holds no notes: not a folder here
+    #expect(projects.notes.first?.text.hasPrefix("# Plan\n![chart](attachments/") == true)
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {

@@ -261,6 +261,9 @@ enum Welcome {
         - **Version history**: right-click → Version History…; rest on a version to see it, Restore (and Undo)
         - Daily backups in the data folder; **Export…** writes every note as a Markdown file
         - Put the data folder in iCloud Drive to share notes between Macs (Settings → Data)
+        - Settings → Data → **Keep a Markdown copy of every note**: plain .md files, kept up to date, for Obsidian, iA Writer, AI tools or git
+        - Settings → Data → **Import…** brings in an Obsidian vault, a Bear or Apple Notes Markdown export, or any folder of .md files
+        - Notes show up in **Spotlight** (locked ones never); pick one there to open it here
 
         ## Screen sharing
         Settings → General → **Hide Cortexy from screen sharing and recordings** leaves its windows out of meetings, recordings and screenshots.
@@ -493,6 +496,9 @@ enum Welcome {
         - **ประวัติเวอร์ชัน**: คลิกขวา → Version History… พักเมาส์ดูแต่ละเวอร์ชัน แล้ว Restore (Undo ได้)
         - backup ทุกวันในโฟลเดอร์ข้อมูล **Export…** เขียนทุกโน้ตออกเป็นไฟล์ Markdown
         - ย้ายโฟลเดอร์ข้อมูลไปไว้ใน iCloud Drive เพื่อใช้โน้ตร่วมกันหลายเครื่อง (Settings → Data)
+        - Settings → Data → **Keep a Markdown copy of every note** เก็บสำเนาเป็นไฟล์ .md ที่อัปเดตตลอด ใช้กับ Obsidian, iA Writer, เครื่องมือ AI หรือ git ได้
+        - Settings → Data → **Import…** นำเข้า Obsidian vault, ไฟล์ Markdown ที่ export จาก Bear หรือ Apple Notes หรือโฟลเดอร์ .md อะไรก็ได้
+        - ค้นโน้ตจาก **Spotlight** ได้ (ยกเว้นโน้ตที่ล็อก) เลือกแล้วจะเปิดใน Cortexy
 
         ## แชร์จอ
         Settings → General → **Hide Cortexy from screen sharing and recordings** ซ่อนหน้าต่างของ Cortexy จากการประชุม การอัดจอ และ screenshot

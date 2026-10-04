@@ -1,4 +1,5 @@
 import AppKit
+import CoreSpotlight
 import SwiftUI
 
 @main
@@ -59,6 +60,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         controller?.show(byHover: false)
         return false
+    }
+
+    /// A note picked in Spotlight.
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void) -> Bool {
+        guard userActivity.activityType == CSSearchableItemActionType, let s = userActivity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+              let id = UUID(uuidString: s), let c = controller else { return false }
+        c.show(byHover: false)
+        c.nav.openNote(id)
+        return true
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
