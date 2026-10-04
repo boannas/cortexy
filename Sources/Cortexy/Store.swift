@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Observation
 import SwiftUI
+import Vision
 
 enum NoteColor: String, Codable, CaseIterable, Identifiable {
     case none, red, orange, yellow, green, teal, blue, purple, pink, gray
@@ -45,6 +46,7 @@ struct Note: Codable, Identifiable, Hashable, Pinnable {
     var lockedTitle: String? // what a locked note is called (shown, like Apple Notes)
     var byFolder = false     // sealed because its folder was locked (taking the folder's lock off opens it; a note locked alone stays)
     var readOnly = false     // shown, not edited (its checkboxes still tick)
+    var apps: [String] = []  // bundle IDs: opening the panel from one of these apps lists the note first
 
     var title: String { lock != nil ? (lockedTitle ?? "Locked Note") : MD.title(text) }
     /// Nothing in it (a locked note never counts as empty: its text is just out of sight).
@@ -70,6 +72,7 @@ struct Note: Codable, Identifiable, Hashable, Pinnable {
         lockedTitle = try c.decodeIfPresent(String.self, forKey: .lockedTitle)
         byFolder = try c.decodeIfPresent(Bool.self, forKey: .byFolder) ?? false
         readOnly = try c.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
+        apps = try c.decodeIfPresent([String].self, forKey: .apps) ?? []
     }
 }
 
@@ -898,5 +901,64 @@ extension JSONEncoder {
             out = ns.replacingCharacters(in: m.range, with: String(Character(c)))
         }
         return out
+    }
+}
+
+/// Text in images, read on this Mac (Vision, Thai and English), so a search finds words in screenshots and photos.
+/// Each attachment is read once in the background and kept in `OCR/<file>.txt`; a sealed (locked) one never is,
+/// and its kept text goes when the image is sealed or deleted.
+enum ImageText {
+    static let imageTypes: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "tif", "webp", "bmp"]
+
+    static func read(_ url: URL) -> String? {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        let supported = (try? request.supportedRecognitionLanguages()) ?? []
+        request.recognitionLanguages = ["th-TH", "en-US"].filter(supported.contains)
+        guard (try? VNImageRequestHandler(url: url).perform([request])) != nil else { return nil }
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    }
+
+    private static var cache: [String: String] = [:] // file name → its text, as read from OCR/
+    static func forget(_ name: String) { cache[name] = nil }
+    private static var busy = false
+    private static let queue = DispatchQueue(label: "cortexy.ocr", qos: .utility)
+
+    /// The kept text of the images a note shows (empty until they've been read).
+    static func text(for n: Note, in store: Store) -> String {
+        MD.imageRegex.matches(in: n.text, range: NSRange(location: 0, length: (n.text as NSString).length)).compactMap { m in
+            let path = (n.text as NSString).substring(with: m.range(at: 2))
+            guard path.hasPrefix("attachments/") else { return nil }
+            let name = String(path.dropFirst("attachments/".count))
+            if let hit = cache[name] { return hit }
+            let t = try? String(contentsOf: store.directory.appendingPathComponent("OCR/\(name).txt"), encoding: .utf8)
+            if let t { cache[name] = t }
+            return t
+        }.joined(separator: "\n")
+    }
+
+    /// Reads the images not read yet, one at a time off the main thread, and drops text whose image is gone
+    /// (deleted, or sealed into `.locked`). Called now and then; does nothing while a pass is running.
+    static func index(_ store: Store) {
+        guard !busy else { return }
+        busy = true
+        let dir = store.directory
+        queue.async {
+            defer { DispatchQueue.main.async { busy = false } }
+            let fm = FileManager.default, att = dir.appendingPathComponent("attachments"), ocr = dir.appendingPathComponent("OCR")
+            let files = Set(((try? fm.contentsOfDirectory(atPath: att.path)) ?? []).filter { imageTypes.contains(($0 as NSString).pathExtension.lowercased()) })
+            let kept = (try? fm.contentsOfDirectory(atPath: ocr.path)) ?? []
+            for k in kept where !files.contains(String(k.dropLast(4))) {
+                try? fm.removeItem(at: ocr.appendingPathComponent(k))
+                DispatchQueue.main.async { cache[String(k.dropLast(4))] = nil }
+            }
+            for f in files where !kept.contains(f + ".txt") {
+                guard let text = read(att.appendingPathComponent(f)), fm.fileExists(atPath: att.appendingPathComponent(f).path) else { continue } // sealed meanwhile: keep nothing
+                try? fm.createDirectory(at: ocr, withIntermediateDirectories: true)
+                try? text.write(to: ocr.appendingPathComponent(f + ".txt"), atomically: true, encoding: .utf8)
+                DispatchQueue.main.async { cache[f] = text }
+            }
+        }
     }
 }

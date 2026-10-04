@@ -1134,10 +1134,14 @@ struct Query: Equatable {
     var isEmpty: Bool { words.isEmpty && excluded.isEmpty && tags.isEmpty && paths.isEmpty && flags.isEmpty }
 
     /// `path` is the note's folder path ("Work › Projects"; "" at the top level).
-    func matches(_ n: Note, path: String) -> Bool {
+    /// `seen`: text read from the note's images (OCR), which counts as its text for words.
+    func matches(_ n: Note, path: String, seen: (Note) -> String = { _ in "" }) -> Bool {
         guard n.archived == flags.contains("archived") else { return false }
         if flags.contains("pinned") && !n.pinned || flags.contains("snippet") && !n.snippet || flags.contains("code") && !n.code { return false }
-        let text = n.lock == nil ? n.text : n.title // a locked note is found by its title, the only part not sealed
+        var text = n.lock == nil ? n.text : n.title // a locked note is found by its title, the only part not sealed
+        if n.lock == nil, !words.isEmpty, text.contains("](attachments/"), !words.allSatisfy({ MD.finds($0, in: text) || MD.finds($0, in: path) }) {
+            text += "\n" + seen(n)
+        }
         for w in words where !MD.finds(w, in: text) && !MD.finds(w, in: path) { return false }
         for w in excluded where MD.finds(w, in: text) { return false }
         for p in paths where !MD.finds(p, in: path) { return false }

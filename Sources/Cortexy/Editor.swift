@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import Quartz
 import SwiftUI
 
@@ -647,7 +648,35 @@ enum Attachments {
         return out
     }
 
+    private static let pdfThumbs = NSCache<NSURL, NSImage>()
+
+    /// A PDF shows its first page (double-click: Quick Look), with its name under it.
+    static func pdfAttachment(name: String, url: URL) -> NSTextAttachment? {
+        let thumb: NSImage
+        if let hit = pdfThumbs.object(forKey: url as NSURL) { thumb = hit } else {
+            guard let page = PDFDocument(url: url)?.page(at: 0) else { return nil }
+            let box = page.bounds(for: .mediaBox), w: CGFloat = 150
+            thumb = page.thumbnail(of: NSSize(width: w, height: min(w * box.height / max(box.width, 1), 210)), for: .mediaBox)
+            pdfThumbs.setObject(thumb, forKey: url as NSURL)
+        }
+        let font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let size = NSSize(width: thumb.size.width + 8, height: thumb.size.height + 26)
+        let card = NSImage(size: size, flipped: false) { r in
+            NSColor.labelColor.withAlphaComponent(0.08).setFill()
+            NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8).fill()
+            thumb.draw(in: NSRect(x: 4, y: 22, width: thumb.size.width, height: thumb.size.height))
+            (name as NSString).draw(with: NSRect(x: 6, y: 5, width: r.width - 12, height: 14), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                    attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])
+            return true
+        }
+        let a = NSTextAttachment()
+        a.image = card
+        a.bounds = CGRect(origin: .zero, size: size)
+        return a
+    }
+
     static func fileAttachment(name: String, url: URL?) -> NSTextAttachment {
+        if let url, url.isFileURL, url.pathExtension.lowercased() == "pdf", let a = pdfAttachment(name: name, url: url) { return a }
         let font = NSFont.systemFont(ofSize: 12, weight: .medium)
         let tw = min(ceil((name as NSString).size(withAttributes: [.font: font]).width), 220)
         let size = NSSize(width: tw + 34, height: 22)
@@ -1204,8 +1233,37 @@ final class MarkdownTextView: NSTextView {
         let top = NSMenuItem(title: "Image Size", action: nil, keyEquivalent: "")
         top.submenu = size
         menu.insertItem(top, at: 0)
-        menu.insertItem(.separator(), at: 1)
+        for (i, (title, action)) in [("Copy Text in Image", #selector(copyImageText(_:))), ("Add Text from Image Below", #selector(insertImageText(_:)))].enumerated() {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = at
+            menu.insertItem(item, at: 1 + i)
+        }
+        menu.insertItem(.separator(), at: 3)
         return menu
+    }
+
+    /// The text in an image (read on this Mac), then `use` with it on the main thread; says so if there's none.
+    private func imageText(at i: Int, _ use: @escaping (String) -> Void) {
+        guard let st = textStorage, i < st.length, let url = st.attribute(.cxOpen, at: i, effectiveRange: nil) as? URL else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let text = ImageText.read(url) ?? ""
+            DispatchQueue.main.async { text.isEmpty ? NSSound.beep() : use(text) }
+        }
+    }
+
+    @objc private func copyImageText(_ item: NSMenuItem) {
+        imageText(at: item.representedObject as? Int ?? 0) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString($0, forType: .string) }
+    }
+
+    @objc private func insertImageText(_ item: NSMenuItem) {
+        let at = item.representedObject as? Int ?? 0
+        imageText(at: at) { [weak self] text in
+            guard let self else { return }
+            let line = (string as NSString).paragraphRange(for: NSRange(location: at, length: 0))
+            setSelectedRange(NSRange(location: NSMaxRange(line), length: 0))
+            insertBlock(text)
+        }
     }
 
     @objc private func resizeImage(_ item: NSMenuItem) {

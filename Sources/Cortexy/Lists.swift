@@ -183,6 +183,10 @@ struct FolderView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         Rows(count: notes.count + all.count, alignment: .leading, spacing: Themes.shared.look.density.spacing) {
+                            if home, let app = nav.frontApp, case let tied = nav.appNotes, !tied.isEmpty {
+                                SectionHeader("With \(app.name)")
+                                ForEach(tied, id: \.1.id) { f, n in appCard(f, n) }
+                            }
                             if folder.id == Folder.trashID {
                                 PageNote(symbol: "trash", text: "Deleted notes and folders stay here \(keepText). Right-click one to restore it.",
                                          action: ("Empty", { nav.requestDelete(.trash) }))
@@ -329,6 +333,16 @@ struct FolderView: View {
         }
         Divider()
         Button("Delete Folder", role: .destructive) { nav.requestDelete(.folder(f)) }
+    }
+
+    /// A note tied to the app in front, wherever it lives: opens and toggles in its own folder; no dragging here.
+    private func appCard(_ fid: UUID, _ n: Note) -> some View {
+        NoteCard(note: n, store: nav.store, selected: false, marked: false,
+                 toggle: { nav.toggleTask(fid, n.id, line: $0) }, onCopy: { nav.copy(n) }, onPreview: NoteCard.preview(n.id))
+            .equatable()
+            .onTapGesture { nav.activate(fid, n) }
+            .contextMenu { NoteMenu(nav: nav, fid: fid, note: n) }
+            .id("app-\(n.id)")
     }
 
     private func card(_ n: Note) -> some View {

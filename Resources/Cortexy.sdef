@@ -13,6 +13,14 @@
             </parameter>
             <result type="text" description="The new note's id."/>
         </command>
+        <command name="append text" code="CrtxAppd" description="Add text to the end of a note. Returns true if it was added.">
+            <cocoa class="CXAppendCommand"/>
+            <direct-parameter type="text" description="The text (Markdown)."/>
+            <parameter name="in note" code="Note" type="text" optional="yes" description="A note's title (made if missing), &quot;today&quot; for today's note, or nothing for the Inbox note.">
+                <cocoa key="target"/>
+            </parameter>
+            <result type="boolean"/>
+        </command>
         <command name="search notes" code="CrtxSrch" description="Text of every note containing a string.">
             <cocoa class="CXSearchCommand"/>
             <direct-parameter type="text"/>

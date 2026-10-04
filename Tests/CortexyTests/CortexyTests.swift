@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import SwiftUI
 import Carbon
+import JavaScriptCore
 import Testing
 
 @testable import Cortexy
@@ -1894,6 +1895,75 @@ private func pngFile(in dir: URL) throws -> String {
     h.tv.restyle(force: true)
     let eq = (h.tv.string as NSString).range(of: "2 =").location + 2
     #expect(h.tv.textStorage!.attribute(.cxMarker, at: eq, effectiveRange: nil) as? String == "sum:24,000")
+}
+
+@MainActor @Test func appendingFromAnywhere() {
+    Prefs.register()
+    let s = Store(testing: tempDir())
+    let nav = Nav(store: s)
+    #expect(nav.append("milk"))                                        // the Inbox note, made at home
+    #expect(nav.append("eggs", to: "inbox"))
+    let inbox = s.folder(Folder.rootID)!.notes.first { $0.title == "Inbox" }!
+    #expect(inbox.text == "# Inbox\nmilk\neggs")
+    let welcome = s.folder(Folder.rootID)!.notes.first { $0.title == "Welcome" }!
+    #expect(nav.append("- [ ] call", to: "welcome") && s.note(Folder.rootID, welcome.id)!.text == "# Welcome\nhello\n- [ ] call")
+    #expect(nav.append("idea", to: "today"))
+    #expect(s.folders.flatMap(\.notes).contains { $0.title == Nav.periodTitle(.day, Date()) && $0.text.hasSuffix("idea") })
+    #expect(nav.append("x", to: "Brand New Note") && s.folders.flatMap(\.notes).contains { $0.text == "# Brand New Note\nx" })
+    s.updateNote(Folder.rootID, welcome.id) { $0.lock = "v1:sealed"; $0.lockedTitle = "Welcome"; $0.text = "" } // locked (and not open): refused
+    #expect(!nav.append("secret", to: "welcome"))
+
+    // Notes tied to the app in front come first at home.
+    nav.frontApp = ("com.apple.Safari", "Safari")
+    #expect(nav.appNotes.isEmpty)
+    nav.toggleApp(Folder.rootID, inbox.id, "com.apple.Safari")
+    #expect(nav.appNotes.map(\.1.id) == [inbox.id])
+}
+
+@Test func bookmarkletSendsThePage() throws {
+    let js = try #require(JSContext())
+    js.evaluateScript("""
+    var document = {title: 'A [big] page'}; var location = {hostname: 'x.y', href: 'https://x.y/p?q=1'};
+    function getSelection() { return 'first\\nsecond'; }
+    """)
+    js.evaluateScript(String(ShortcutSettings.bookmarklet.dropFirst("javascript:".count)))
+    let href = try #require(js.evaluateScript("location.href")?.toString())
+    let url = try #require(URLComponents(string: href))
+    #expect(url.scheme == "cortexy" && url.host == "new")
+    #expect(url.queryItems?.first { $0.name == "folder" }?.value == "Clippings")
+    #expect(url.queryItems?.first { $0.name == "text" }?.value == "# A big page\n[x.y](https://x.y/p?q=1)\n\n> first\n> second")
+}
+
+/// Text in an image is read on the Mac and found by search; a PDF shows its first page.
+@MainActor @Test func imagesAreReadAndPDFsShow() async throws {
+    let dir = tempDir()
+    let s = Store(testing: dir)
+    let nav = Nav(store: s)
+    let att = dir.appendingPathComponent("attachments")
+    try FileManager.default.createDirectory(at: att, withIntermediateDirectories: true)
+    let img = NSImage(size: NSSize(width: 640, height: 160), flipped: false) { r in
+        NSColor.white.setFill(); r.fill()
+        ("Quarterly Zebra Report" as NSString).draw(at: NSPoint(x: 20, y: 60), withAttributes: [.font: NSFont.systemFont(ofSize: 44), .foregroundColor: NSColor.black])
+        return true
+    }
+    try NSBitmapImageRep(data: img.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: att.appendingPathComponent("shot.png"))
+    #expect(ImageText.read(att.appendingPathComponent("shot.png"))?.contains("Zebra") == true)
+    let n = s.addNote(to: Folder.rootID, text: "# Screens\n![](attachments/shot.png)")!
+    ImageText.index(s)
+    for _ in 0..<100 where !FileManager.default.fileExists(atPath: dir.appendingPathComponent("OCR/shot.png.txt").path) { try await Task.sleep(for: .milliseconds(50)) }
+    try await Task.sleep(for: .milliseconds(100)) // its main-queue bookkeeping
+    #expect(nav.hits(Query("zebra")).map(\.1.id) == [n])
+    try FileManager.default.moveItem(at: att.appendingPathComponent("shot.png"), to: att.appendingPathComponent("shot.png.locked")) // sealed
+    ImageText.forget("shot.png")
+    try await Task.sleep(for: .milliseconds(200))
+    ImageText.index(s)
+    for _ in 0..<60 where FileManager.default.fileExists(atPath: dir.appendingPathComponent("OCR/shot.png.txt").path) { try await Task.sleep(for: .milliseconds(50)) }
+    #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("OCR/shot.png.txt").path)) // its text went with it
+
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 400))
+    try view.dataWithPDF(inside: view.bounds).write(to: att.appendingPathComponent("doc.pdf"))
+    let a = Attachments.fileAttachment(name: "doc.pdf", url: att.appendingPathComponent("doc.pdf"))
+    #expect(a.bounds.height > 100) // a page, not a one-line chip
 }
 
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short

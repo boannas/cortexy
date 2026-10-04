@@ -66,6 +66,8 @@ extension NoteLock {
                   (try? box.write(to: dir.appendingPathComponent(name + ".locked"), options: .atomic)) != nil else { continue }
             try? fm.removeItem(at: Store.unlockedAttachments.appendingPathComponent(name))
             try? fm.moveItem(at: plain, to: Store.unlockedAttachments.appendingPathComponent(name))
+            try? fm.removeItem(at: dir.deletingLastPathComponent().appendingPathComponent("OCR/\(name).txt")) // what search read in it
+            ImageText.forget(name)
         }
     }
 

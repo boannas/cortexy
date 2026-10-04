@@ -828,6 +828,9 @@ struct FormatBar: View {
                 Button("Highlight  ⇧⌘H") { send("cxHighlight:") }
                 Button("Code Block") { send("cxCodeBlock:") }
                 Button("Divider") { send("cxDivider:") }
+                Button("Callout") { send("cxCallout:") }
+                Divider()
+                Button("Screenshot as Text") { nav.insertScreenshotText() }
             }
             item("tablecells", "Table", "cxTable:")
             item("calendar.badge.plus", "Due Date", "cxDue:")
@@ -892,6 +895,16 @@ struct NoteMenu: View {
         Toggle("Snippet (Click Copies)", isOn: Binding(get: { note.snippet }, set: { v in store.updateNote(fid, note.id) { $0.snippet = v } }))
         Toggle("Code Mode", isOn: Binding(get: { note.code }, set: { v in store.updateNote(fid, note.id) { $0.code = v } }))
         Toggle("Read Only", isOn: Binding(get: { note.readOnly }, set: { v in store.updateNote(fid, note.id) { $0.readOnly = v } }))
+        Menu("Show With App") {
+            // Apps running now, and any it's tied to already (open or not).
+            let running = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+            let ids = Array(NSOrderedSet(array: note.apps + running.compactMap(\.bundleIdentifier)).array as! [String])
+            ForEach(ids, id: \.self) { id in
+                let name = running.first { $0.bundleIdentifier == id }?.localizedName
+                    ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: id).map { FileManager.default.displayName(atPath: $0.path) } ?? id
+                Toggle(name, isOn: Binding(get: { note.apps.contains(id) }, set: { _ in nav.toggleApp(fid, note.id, id) }))
+            }
+        }
         Button("Duplicate") { store.duplicateNote(fid, note.id); nav.flash("Duplicated") }
         Button(note.archived ? "Unarchive" : "Archive") { nav.archive(fid, note.id, !note.archived) }
         Menu("Move to") {

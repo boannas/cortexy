@@ -116,3 +116,81 @@ struct NoteWindowView: View {
         return st
     }
 }
+
+/// The capture box (its own global shortcut): type, ↩ adds it to the end of the Inbox note or today's note
+/// without opening the panel. Esc, or clicking elsewhere, puts it away keeping what's typed for next time.
+final class CaptureWindow: NSObject, NSWindowDelegate {
+    static let shared = CaptureWindow()
+    private var window: NSPanel?
+
+    func show(nav: Nav) {
+        let w = window ?? {
+            let w = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 150),
+                            styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: false)
+            w.level = .floating
+            w.isFloatingPanel = true
+            w.hidesOnDeactivate = false
+            w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.isMovableByWindowBackground = true
+            w.isReleasedWhenClosed = false
+            w.sharingType = Prefs.sharing
+            w.delegate = self
+            w.contentView = FirstMouseHostingView(rootView: CaptureView(nav: nav) { [weak self] in self?.close() })
+            window = w
+            return w
+        }()
+        // A third of the way down the screen the pointer is on.
+        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
+        if let f = screen?.visibleFrame { w.setFrameTopLeftPoint(NSPoint(x: f.midX - w.frame.width / 2, y: f.maxY - f.height / 3 + w.frame.height)) }
+        w.makeKeyAndOrderFront(nil)
+    }
+
+    func close() { window?.orderOut(nil) }
+    func windowDidResignKey(_ n: Notification) { close() }
+    var isShown: Bool { window?.isVisible == true }
+}
+
+struct CaptureView: View {
+    let nav: Nav
+    let done: () -> Void
+    @AppStorage("captureDraft") private var draft = ""
+    @AppStorage(Prefs.captureTarget) private var target = "inbox"
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Jot something down…", text: $draft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15))
+                .lineLimit(3...8)
+                .focused($focused)
+                .onSubmit(add)
+            HStack {
+                Picker("Add to", selection: $target) {
+                    Text("Inbox").tag("inbox")
+                    Text("Today's Note").tag("today")
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .labelsHidden()
+                Spacer()
+                Text("↩ adds · ⌥↩ new line · Esc").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 26)
+        .padding(.bottom, 14)
+        .frame(width: 440)
+        .onExitCommand(perform: done)
+        .onAppear { focused = true }
+    }
+
+    private func add() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return done() }
+        if nav.append(text, to: target) { draft = "" }
+        done()
+    }
+}

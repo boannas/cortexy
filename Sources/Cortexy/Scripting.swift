@@ -16,6 +16,14 @@ import AppKit
     }
 }
 
+/// `append text "milk" in note "Groceries"` (or "today", or nothing: the Inbox note).
+@objc(CXAppendCommand) final class CXAppendCommand: NSScriptCommand {
+    override func performDefaultImplementation() -> Any? {
+        guard let c = PanelController.shared else { return false }
+        return c.nav.append(directParameter as? String ?? "", to: evaluatedArguments?["target"] as? String)
+    }
+}
+
 @objc(CXShowCommand) final class CXShowCommand: NSScriptCommand {
     override func performDefaultImplementation() -> Any? { PanelController.shared?.show(byHover: false); return nil }
 }

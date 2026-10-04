@@ -125,6 +125,13 @@ enum Welcome {
         - Copy from a note and paste into Mail or Pages: the formatting comes along
         - Rest the pointer on a `[[link]]` to read that note, or on a web link to see its page's card
 
+        ## Capture
+        - Set a **Capture box** shortcut (Settings → Shortcuts): type a thought from any app, ↩ adds it to your *Inbox* note or today's note without opening the panel
+        - Settings → Shortcuts → **Web Clipper**: a bookmark that saves the page you're on as a note in *Clippings*
+        - Right-click a note → **Show With App**: opening the panel from that app lists the note first
+        - Words in images and screenshots are found by search; right-click an image to copy its text; **Screenshot as Text** (Aa menu) types out what you capture
+        - PDFs show their first page; double-click for the whole thing
+
         ---
         The bar under the editor has all of this; its **More Formatting** button adds headings, a code block, a divider, images and screenshots.
 
@@ -347,6 +354,13 @@ enum Welcome {
         - ข้อความที่คัดลอกจากเว็บ, Notes, Docs หรือ Word กลายเป็น Markdown · วางโค้ดจะอยู่ใน code block ให้ · **⌥⇧⌘V** วางแบบข้อความล้วน
         - คัดลอกจากโน้ตไปวางใน Mail หรือ Pages ได้รูปแบบตัวอักษรไปด้วย
         - พักเมาส์บน `[[ลิงก์]]` เพื่ออ่านโน้ตนั้น หรือบนลิงก์เว็บเพื่อดูการ์ดของหน้าเว็บ
+
+        ## จดเร็ว
+        - ตั้งคีย์ลัด **Capture box** (Settings → Shortcuts) พิมพ์จากแอปไหนก็ได้ ↩ แล้วต่อท้ายโน้ต *Inbox* หรือโน้ตวันนี้ โดยไม่ต้องเปิด panel
+        - Settings → Shortcuts → **Web Clipper** ได้ bookmark ที่เก็บหน้าเว็บที่เปิดอยู่เป็นโน้ตในโฟลเดอร์ *Clippings*
+        - คลิกขวาโน้ต → **Show With App** เปิด panel จากแอปนั้นแล้วโน้ตนี้จะขึ้นก่อน
+        - ค้นหาเจอคำในรูปและ screenshot ด้วย · คลิกขวารูปเพื่อคัดลอกข้อความในรูป · **Screenshot as Text** (เมนู Aa) จับภาพแล้วได้เป็นข้อความ
+        - PDF แสดงหน้าแรก ดับเบิลคลิกเพื่อดูทั้งไฟล์
 
         ---
         แถบใต้ editor มีทุกอย่างนี้ ปุ่ม **More Formatting** มีหัวข้อ code block เส้นคั่น รูป และภาพหน้าจอเพิ่ม

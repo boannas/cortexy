@@ -85,6 +85,7 @@ import UniformTypeIdentifiers
     @ObservationIgnored private var tagCache: (stamp: Int, tags: [(name: String, count: Int)])?
     var searchFocus = 0
     var historyNote: UUID? // showing this note's Version History
+    var frontApp: (id: String, name: String)? // the app in front when the panel opened (its notes come first)
     var calendarShown = false    // the daily notes calendar (⇧⌘D)
     var attachmentsShown = false // every attached file, and which notes use it
     var unlocked: [UUID: String] = [:] // locked notes opened this session: their text, only ever in memory
@@ -525,7 +526,7 @@ import UniformTypeIdentifiers
         guard !q.isEmpty else { return [] }
         return (folders ?? store.liveFolders).flatMap { f in
             let path = f.id == Folder.rootID ? "" : store.path(f.id)
-            return f.notes.filter { q.matches($0, path: path) }.map { (f, $0) }
+            return f.notes.filter { q.matches($0, path: path, seen: { [store] in ImageText.text(for: $0, in: store) }) }.map { (f, $0) }
         }
     }
 
@@ -648,6 +649,17 @@ import UniformTypeIdentifiers
         store.liveFolders.flatMap { f in
             f.notes.filter { n in n.id != nid && MD.wikiLinks(n.text).contains { t in names.contains { MD.links(t, to: $0) } } }.map { (f, $0) }
         }
+    }
+
+    /// Notes tied to the app the panel was opened from.
+    var appNotes: [(UUID, Note)] {
+        guard let app = frontApp?.id else { return [] }
+        return store.liveFolders.filter { !store.inTrash($0.id) }.flatMap { f in f.notes.filter { $0.apps.contains(app) && !$0.archived }.map { (f.id, $0) } }
+    }
+
+    /// Ties a note to an app, or unties it.
+    func toggleApp(_ fid: UUID, _ nid: UUID, _ bundle: String) {
+        store.updateNote(fid, nid) { n in if n.apps.contains(bundle) { n.apps.removeAll { $0 == bundle } } else { n.apps.append(bundle) } }
     }
 
     /// Notes that name this note (its title or an alias) in their text without linking to it.
@@ -965,10 +977,16 @@ import UniformTypeIdentifiers
 
     /// A day's, week's or month's note (made from its template the first time), all in the Daily folder.
     func openPeriodic(_ period: Period, date: Date = Date()) {
+        guard let (fid, nid, caret) = periodicNote(period, date: date) else { return }
+        open(fid, nid, caret: caret)
+    }
+
+    /// That note, made if it isn't there: its folder, its id, and (when just made) where the caret goes.
+    func periodicNote(_ period: Period, date: Date = Date()) -> (UUID, UUID, Int?)? {
         let name = Prefs.text(Prefs.dailyFolder)
         let fid = store.moveTargets.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }?.id ?? store.addFolder(name)
         let title = Nav.periodTitle(period, date)
-        if let n = store.folder(fid)?.notes.first(where: { $0.title == title }) { return open(fid, n.id, caret: nil) }
+        if let n = store.folder(fid)?.notes.first(where: { $0.title == title }) { return (fid, n.id, nil) }
         let wanted = Prefs.text([.day: Prefs.dailyTemplate, .week: Prefs.weeklyTemplate, .month: Prefs.monthlyTemplate][period]!)
         let template = wanted.isEmpty ? nil : templates.first { $0.title.localizedCaseInsensitiveCompare(wanted) == .orderedSame }
         var (text, caret) = template.map { Nav.expand($0.text, date: date, folder: name) } ?? ("# \(title)\n", nil)
@@ -977,8 +995,31 @@ import UniformTypeIdentifiers
             text = head + text
             caret = caret.map { $0 + (head as NSString).length }
         }
-        guard let id = store.addNote(to: fid, text: text) else { return }
-        open(fid, id, caret: caret ?? (text as NSString).length)
+        guard let id = store.addNote(to: fid, text: text) else { return nil }
+        return (fid, id, caret ?? (text as NSString).length)
+    }
+
+    /// Text added to the end of a note without opening it: "inbox" (a note called Inbox at home, made if
+    /// needed), "today" (today's note) or a note's title (made if there's none). A locked note says no.
+    @discardableResult func append(_ text: String, to target: String? = nil) -> Bool {
+        let t = (target ?? "inbox").trimmingCharacters(in: .whitespaces)
+        let place: (UUID, UUID)?
+        switch t.lowercased() {
+        case "today": place = periodicNote(.day).map { ($0.0, $0.1) }
+        case "", "inbox":
+            place = store.folder(Folder.rootID)?.notes.first { $0.title.localizedCaseInsensitiveCompare("Inbox") == .orderedSame }.map { (Folder.rootID, $0.id) }
+                ?? store.addNote(to: Folder.rootID, text: "# Inbox\n").map { (Folder.rootID, $0) }
+        default:
+            place = resolve(title: t).map { ($0.0, $0.1.id) } ?? store.addNote(to: targetFolder(named: nil), text: "# \(t)\n").map { (targetFolder(named: nil), $0) }
+        }
+        guard let (fid, nid) = place, let n = store.note(fid, nid) else { return false }
+        if n.lock != nil {
+            guard let open = unlocked[nid] else { flash("“\(n.title)” is locked"); return false }
+            updateLocked(nid, open + (open.hasSuffix("\n") || open.isEmpty ? "" : "\n") + text) // sealed again, never written plain
+            return true
+        }
+        store.updateNote(fid, nid) { $0.text += ($0.text.hasSuffix("\n") || $0.text.isEmpty ? "" : "\n") + text }
+        return true
     }
 
     private func open(_ fid: UUID, _ nid: UUID, caret: Int?) {
@@ -1103,6 +1144,7 @@ import UniformTypeIdentifiers
                     self?.store.updateNote(fid, nid) { $0.code.toggle() }
                 },
                 cmd("Copy Note Text", "doc.on.doc") { [weak self] in self?.copy(n) },
+                cmd("Insert Screenshot Text", "text.viewfinder") { [weak self] in self?.insertScreenshotText() },
             cmd("Version History", "clock.arrow.circlepath") { [weak self] in self?.historyNote = nid },
             cmd("Open Note in Window", "macwindow.on.rectangle") { [weak self] in self.map { NoteWindows.shared.show(nid, nav: $0) } },
                 cmd("Show Note in Graph", "point.3.connected.trianglepath.dotted") { [weak self] in self.map { GraphWindow.shared.show(nav: $0, around: nid) } },
@@ -1234,7 +1276,10 @@ import UniformTypeIdentifiers
     }
 
     /// Hides the panel, lets the user drag out a region, and drops the capture into the open note.
-    func insertScreenshot() {
+    /// A screenshot's text instead of the picture (read on this Mac).
+    func insertScreenshotText() { insertScreenshot(asText: true) }
+
+    func insertScreenshot(asText: Bool = false) {
         guard case let .note(fid, nid) = route, let c = PanelController.shared else { return }
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("cortexy-\(UUID().uuidString).png")
         c.hide(lock: false) // the note it goes into stays open
@@ -1246,8 +1291,14 @@ import UniformTypeIdentifiers
                 DispatchQueue.main.async { [self] in
                     defer { try? FileManager.default.removeItem(at: tmp) }
                     c.show(byHover: false)
-                    guard let data = try? Data(contentsOf: tmp), let path = store.addAttachment(data, ext: "png") else { return }
-                    let md = "![screenshot](\(path))"
+                    let md: String
+                    if asText {
+                        guard let text = ImageText.read(tmp), !text.isEmpty else { return flash("No text found in the screenshot") }
+                        md = text
+                    } else {
+                        guard let data = try? Data(contentsOf: tmp), let path = store.addAttachment(data, ext: "png") else { return }
+                        md = "![screenshot](\(path))"
+                    }
                     if let tv = MarkdownTextView.active, tv.window != nil { tv.insertBlock(md) }
                     else if let open = unlocked[nid] { updateLocked(nid, open + "\n" + md) } // sealed, never into plain text
                     else if store.note(fid, nid)?.lock == nil { store.updateNote(fid, nid) { $0.text += "\n" + md } }

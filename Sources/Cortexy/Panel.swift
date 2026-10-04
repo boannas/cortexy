@@ -103,6 +103,7 @@ enum Prefs {
     static let quickLook = "quickLook"                 // double-clicking an attachment previews it (else opens it in its app)
     static let linkPreviews = "linkPreviews"           // pasted links get their page's title; resting on one shows the page's card
     static let selectionBar = "selectionBar"           // the formatting bar over selected text
+    static let captureKey = "hotkey.capture", captureTarget = "captureTarget" // the capture box, and where it adds: inbox | today
     static let weekFormat = "weekFormat", monthFormat = "monthFormat"             // titles of weekly and monthly notes
     static let weeklyTemplate = "weeklyTemplate", monthlyTemplate = "monthlyTemplate"
 
@@ -116,7 +117,7 @@ enum Prefs {
         codeTab: 4, trashDays: 30, backupsKept: 14,
         templatesFolder: "Templates", dailyFolder: "Daily", dailyTemplate: "", dateFormat: "yyyy-MM-dd", todayKey: "", systemCalendar: false, versionsKept: 50, webImages: false, reminders: true, remindAt: 9, touchID: false, lockOnHide: true,
         keepOpen: false, panelOpacity: 1.0, hideFromCapture: false, quickLook: true, linkPreviews: true, selectionBar: true,
-        weekFormat: "YYYY-'W'ww", monthFormat: "yyyy-MM", weeklyTemplate: "", monthlyTemplate: "",
+        captureKey: "", captureTarget: "inbox", weekFormat: "YYYY-'W'ww", monthFormat: "yyyy-MM", weeklyTemplate: "", monthlyTemplate: "",
         toggleKey: HotKeySpec(keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), display: "⌃⌥N").encoded,
         newNoteKey: "",
     ]
@@ -215,6 +216,7 @@ final class PanelController: NSObject {
         syncTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.store.reloadIfChangedExternally()
             self?.store.maintain() // a no-op until the day changes
+            if let store = self?.store { ImageText.index(store) } // text in new images, for search
         }
     }
 
@@ -228,6 +230,9 @@ final class PanelController: NSObject {
         HotKeys.shared.set(3, HotKeySpec(encoded: d.string(forKey: Prefs.todayKey) ?? "")) { [weak self] in
             self?.nav.openToday()
             self?.show(byHover: false)
+        }
+        HotKeys.shared.set(4, HotKeySpec(encoded: d.string(forKey: Prefs.captureKey) ?? "")) { [weak self] in
+            if let self { CaptureWindow.shared.show(nav: nav) }
         }
         // Shortcuts made in Settings that work from any app (ids from 100); ones taken away are let go.
         let anywhere = CustomShortcut.all.filter { $0.anywhere && $0.spec != nil }
@@ -281,6 +286,9 @@ final class PanelController: NSObject {
             return
         }
         store.reloadIfChangedExternally()
+        if let app = NSWorkspace.shared.frontmostApplication, app.bundleIdentifier != Bundle.main.bundleIdentifier, let id = app.bundleIdentifier {
+            nav.frontApp = (id, app.localizedName ?? id)
+        }
         shown = true
         openedByHover = byHover
         openBar.update(visible: false)
@@ -793,6 +801,9 @@ final class PanelController: NSObject {
         case "new":
             nav.newNote(text: q("text") ?? "", folderName: q("folder"))
             show(byHover: false)
+        case "append": // to=inbox (default) | today | a note's title; the panel stays as it is
+            if nav.append(q("text") ?? "", to: q("to")) { nav.flash("Added to \(q("to") ?? "Inbox")") }
+        case "capture": CaptureWindow.shared.show(nav: nav)
         case "search":
             nav.search = q("q") ?? ""
             show(byHover: false)

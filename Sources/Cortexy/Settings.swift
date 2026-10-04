@@ -541,6 +541,7 @@ struct ShortcutSettings: View {
                 LabeledContent("Show or hide the panel") { HotKeyRecorder(key: Prefs.toggleKey) }
                 LabeledContent("New note") { HotKeyRecorder(key: Prefs.newNoteKey) }
                 LabeledContent("Today's note") { HotKeyRecorder(key: Prefs.todayKey) }
+                LabeledContent("Capture box (add to Inbox or today's note)") { HotKeyRecorder(key: Prefs.captureKey) }
             } header: {
                 Text("Global")
             } footer: {
@@ -548,14 +549,32 @@ struct ShortcutSettings: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             CustomShortcutsSection()
+            Section {
+                Text(Self.bookmarklet).font(.system(size: 11, design: .monospaced)).lineLimit(3).truncationMode(.middle).textSelection(.enabled)
+                HStack {
+                    Spacer()
+                    Button("Copy Bookmarklet") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(Self.bookmarklet, forType: .string)
+                    }
+                }
+            } header: {
+                Text("Web Clipper")
+            } footer: {
+                Text("Make a bookmark in your browser and paste this as its address. Clicking it saves the page's title, link and any selected text as a note in the folder Clippings (the browser asks once to open Cortexy).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("In the panel") {
                 ForEach(Self.panelKeys, id: \.0) { name, keys in LabeledContent(name, value: keys) }
             }
             // The three global ones; shortcuts you made stay (each has its own remove button).
-            RestoreDefaults(keys: [Prefs.toggleKey, Prefs.newNoteKey, Prefs.todayKey]) { PanelController.shared?.registerHotKeys() }
+            RestoreDefaults(keys: [Prefs.toggleKey, Prefs.newNoteKey, Prefs.todayKey, Prefs.captureKey]) { PanelController.shared?.registerHotKeys() }
         }
         .formStyle(.grouped)
     }
+
+    /// A browser bookmark that sends the page (title, link, selection) to `cortexy://new` as a note in Clippings.
+    static let bookmarklet = #"javascript:(()=>{const t=document.title.replace(/[\[\]]/g,''),s=String(getSelection()).trim();location.href='cortexy://new?folder=Clippings&text='+encodeURIComponent('# '+t+'\n['+location.hostname+']('+location.href+')'+(s?'\n\n> '+s.replace(/\n/g,'\n> '):''))})()"#
 
     static let panelKeys: [(String, String)] = [
         ("New note / folder", "⌘N / ⇧⌘N"), ("Today's note", "⌘D"), ("Search", "⌘F"), ("Quick open / commands", "⌘O / ⌘P"), ("Back", "⌘[ or ← (outside a note)"),
@@ -578,7 +597,7 @@ struct HotKeyRecorder: View {
 
     /// The app's other global shortcuts (its own and the user's), which this one mustn't repeat.
     private var others: [HotKeySpec] {
-        [Prefs.toggleKey, Prefs.newNoteKey, Prefs.todayKey].filter { $0 != key }.compactMap { HotKeySpec(encoded: UserDefaults.standard.string(forKey: $0) ?? "") }
+        [Prefs.toggleKey, Prefs.newNoteKey, Prefs.todayKey, Prefs.captureKey].filter { $0 != key }.compactMap { HotKeySpec(encoded: UserDefaults.standard.string(forKey: $0) ?? "") }
             + CustomShortcut.all.compactMap(\.spec)
     }
 

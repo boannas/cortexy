@@ -156,7 +156,7 @@ Version History แสดง **diff** กับปัจจุบัน · เ�
 open "cortexy://new?text=Buy%20milk&folder=Home"
 ```
 
-`cortexy://show` · `hide` · `toggle` · `new?text=…&folder=…` · `search?q=…` · `open?title=…` · `tag/ชื่อtag`
+`cortexy://show` · `hide` · `toggle` · `new?text=…&folder=…` · `append?text=…&to=…` · `capture` · `search?q=…` · `open?title=…` · `tag/ชื่อtag`
 
 **AppleScript** (ใน Shortcuts ใช้ action "Run AppleScript")
 
@@ -165,6 +165,14 @@ tell application "Cortexy" to add note "Buy milk" in folder "Home"
 tell application "Cortexy" to search notes "milk"
 tell application "Cortexy" to toggle panel
 ```
+
+**ต่อท้ายโน้ต** `cortexy://append?text=…&to=inbox|today|ชื่อโน้ต` · AppleScript `append text "นม" in note "ของที่ต้องซื้อ"` (ไม่ใส่ in note = โน้ต Inbox) ·
+`cortexy://capture` เปิดกล่อง capture
+
+**Capture box**: ตั้งคีย์ลัดใน Settings → Shortcuts พิมพ์แล้ว ↩ ต่อท้าย Inbox/โน้ตวันนี้โดยไม่เปิด panel ·
+**Web Clipper**: Settings → Shortcuts → Copy Bookmarklet แล้ววางเป็น address ของ bookmark ในเบราว์เซอร์ (เก็บชื่อหน้า ลิงก์ และข้อความที่เลือก ลงโฟลเดอร์ Clippings) ·
+**โน้ตผูกกับแอป** (คลิกขวาโน้ต → Show With App) · **OCR**: ค้นเจอคำในรูป (อ่านในเครื่อง ไทย+อังกฤษ เก็บใน `OCR/`, รูปในโน้ตที่ล็อกไม่ถูกอ่าน), คลิกขวารูป → Copy Text, Screenshot as Text ·
+PDF แสดงหน้าแรก
 
 **Services**: เลือกข้อความในแอปไหนก็ได้ → คลิกขวา → Services → **New Cortexy Note**
 (ตั้งคีย์ลัดได้ที่ System Settings → Keyboard → Keyboard Shortcuts → Services)
