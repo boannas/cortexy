@@ -473,8 +473,8 @@ struct EditorView: View {
             if look.formatBar { FormatBar(nav: nav) } else { Spacer().frame(height: 10) }
             }
         }
-        // Backlinks only change when this note's title does (other notes aren't edited meanwhile).
-        .task(id: note.title) { links = nav.backlinks(to: note.title, excluding: nid) }
+        // Backlinks only change when this note's title or aliases do (other notes aren't edited meanwhile).
+        .task(id: [note.title] + MD.aliases(note.text)) { links = nav.backlinks(to: [note.title] + MD.aliases(note.text), excluding: nid) }
     }
 
     @Local private var links: [(Folder, Note)] = []

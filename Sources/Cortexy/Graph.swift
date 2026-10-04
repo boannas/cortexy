@@ -30,12 +30,14 @@ final class GraphModel {
         let old = Dictionary(nodes.map { ($0.id, $0.p) }) { a, _ in a }
         let oldLinks = Set(edges.map { [nodes[$0.0].id, nodes[$0.1].id].sorted() })
         let notes = store.liveFolders.flatMap { f in f.notes.filter { !$0.archived }.map { (f.id, $0) } }
-        // [[Title]] means the newest note with that title.
+        // [[Title]] means the newest note with that title (or alias); [[Title#Heading]] that note too.
         var byTitle: [String: Note] = [:]
         for (_, n) in notes {
             let key = n.title.lowercased()
             if byTitle[key].map({ $0.modified < n.modified }) ?? true { byTitle[key] = n }
         }
+        for (_, n) in notes { for a in MD.aliases(n.text) where byTitle[a.lowercased()] == nil { byTitle[a.lowercased()] = n } } // titles first
+        func target(_ t: String) -> Note? { byTitle[t.lowercased()] ?? (t.contains("#") ? byTitle[MD.splitLink(t).title.lowercased()] : nil) }
         var list = notes.map { Node(id: $0.1.id.uuidString, title: $0.1.title, note: $0.1.id, color: $0.1.color, p: .zero) }
         var index = Dictionary(list.enumerated().map { ($0.element.id, $0.offset) }) { a, _ in a }
         var pairs = Set<[Int]>()
@@ -43,7 +45,7 @@ final class GraphModel {
         for (_, n) in notes where n.lock == nil {
             guard let from = index[n.id.uuidString] else { continue }
             for title in MD.wikiLinks(n.text) {
-                if let target = byTitle[title.lowercased()], let to = index[target.id.uuidString] { link(from, to) }
+                if let target = target(title), let to = index[target.id.uuidString] { link(from, to) }
             }
             guard tags else { continue }
             for t in MD.tags(n.text) {

@@ -168,6 +168,8 @@ enum Welcome {
 
         - Type `[[` and pick a note: [[Getting started]] — click it to go there
         - `[[Writing|another name]]` shows other text for the same link
+        - `[[Note#Heading]]` opens a note at that heading (type `#` after the title to pick one); `[[#Heading]]` jumps within this note; `[[Note#^id]]` goes to the line ending in `^id`
+        - Notes from Obsidian keep their `---` properties at the top: they don't become the title, `tags:` count as tags and `aliases:` are other names links can use
         - A link to a note that doesn't exist makes it when clicked
         - Rename a note and the links to it follow
         - Under a note, **N linked here** lists the notes that link to it
@@ -349,6 +351,8 @@ enum Welcome {
 
         - พิมพ์ `[[` แล้วเลือกโน้ต: [[เริ่มต้นใช้งาน]] คลิกเพื่อไปที่โน้ตนั้น
         - `[[การเขียน|ชื่ออื่น]]` แสดงข้อความอื่นแต่ลิงก์ไปที่เดิม
+        - `[[โน้ต#หัวข้อ]]` เปิดโน้ตแล้วไปที่หัวข้อนั้น (พิมพ์ `#` หลังชื่อโน้ตแล้วเลือกหัวข้อได้) · `[[#หัวข้อ]]` ไปหัวข้อในโน้ตนี้ · `[[โน้ต#^id]]` ไปบรรทัดที่ลงท้ายด้วย `^id`
+        - โน้ตจาก Obsidian ที่มี `---` properties ด้านบน: ไม่ถูกใช้เป็นชื่อโน้ต, `tags:` นับเป็น tag, `aliases:` เป็นชื่ออื่นที่ลิงก์ใช้ได้
         - ลิงก์ไปโน้ตที่ยังไม่มี คลิกแล้วจะสร้างให้
         - เปลี่ยนชื่อโน้ต ลิงก์ที่ชี้มาจะเปลี่ยนตาม
         - ใต้โน้ต **N linked here** บอกว่ามีโน้ตไหนลิงก์มาหา

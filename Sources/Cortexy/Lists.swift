@@ -865,7 +865,7 @@ struct NoteCard: View {
         // Showing just the title (and no search line to find): only the top of the note needs reading.
         let text = brief && showMatch == nil ? MD.head(note.text, lines: 12).text : note.text
         let raw = text.components(separatedBy: "\n") // for list nesting, which MD.Line leaves out
-        let all = Array(MD.lines(text).enumerated()).filter { $0.element != .fence }
+        let all = Array(MD.lines(text).enumerated()).filter { $0.element != .fence && !$0.element.isMeta }
         let content = Array(all.drop { $0.element == .blank }.reversed().drop { $0.element == .blank }.reversed())
         let limit = exporting ? Int.max : brief ? 1 : look.cardLines
         let shown = Self.lines(content, limit: limit, match: brief ? showMatch : nil, raw: raw)
@@ -1061,7 +1061,7 @@ struct LineView: View {
     var body: some View {
         switch line {
         case .blank: Color.clear.frame(height: max(0, style.lineHeight - style.paragraphSpacing))
-        case .fence: EmptyView()
+        case .fence, .meta: EmptyView()
         case .heading(_, let s):
             inline(s).font(style.swiftUI(weight: .bold)) // cards keep headings at text size; the editor shows them big
         case .task(let done, let s):

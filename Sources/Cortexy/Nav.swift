@@ -577,20 +577,31 @@ import UniformTypeIdentifiers
     /// Completions for the editor: note titles after `[[`, tags after `#`.
     func suggestions(_ kind: MarkdownTextView.Completion, _ partial: String, excluding nid: UUID? = nil) -> [String] {
         var seen = Set<String>()
+        if kind == .link, let hash = partial.firstIndex(of: "#") { // [[Note#  → that note's headings
+            let name = String(partial[..<hash]), rest = String(partial[partial.index(after: hash)...])
+            let n: Note? = name.isEmpty ? nid.flatMap { id in store.folderOf(id).flatMap { store.note($0.id, id) } } : resolve(title: name)?.1
+            guard let n, !rest.hasPrefix("^") else { return [] }
+            let heads = MD.headings(unlocked[n.id] ?? n.text).map(\.title).filter { seen.insert($0.lowercased()).inserted }
+            return heads.compactMap { h in MD.fuzzy(rest, h).map { (name + "#" + h, $0) } }.sorted { $0.1 > $1.1 }.prefix(12).map(\.0)
+        }
         let names: [String] = switch kind {
         case .tag: allTags.map(\.name)
-        case .link: store.liveFolders.flatMap(\.notes).filter { $0.id != nid && !$0.archived }.map(\.title)
+        case .link: store.liveFolders.flatMap(\.notes).filter { $0.id != nid && !$0.archived }.flatMap { [$0.title] + MD.aliases($0.text) }
             .filter { $0 != "Empty Note" && seen.insert($0.lowercased()).inserted }
         }
         return names.compactMap { n in MD.fuzzy(partial, n).map { (n, $0) } }.sorted { $0.1 > $1.1 }.prefix(12).map(\.0)
     }
 
     /// The note a `[[title]]` means: one in the open folder first, else the newest with that title.
+    /// A title beats an alias (`aliases:` in a note's frontmatter).
     func resolve(title: String) -> (UUID, Note)? {
         let t = title.trimmingCharacters(in: .whitespaces)
-        return store.liveFolders.flatMap { f in
-            f.notes.filter { $0.title.localizedCaseInsensitiveCompare(t) == .orderedSame }.map { (f.id, $0) }
-        }.max { a, b in a.0 == currentFolder ? false : b.0 == currentFolder ? true : a.1.modified < b.1.modified }
+        func best(_ named: (Note) -> Bool) -> (UUID, Note)? {
+            store.liveFolders.flatMap { f in f.notes.filter(named).map { (f.id, $0) } }
+                .max { a, b in a.0 == currentFolder ? false : b.0 == currentFolder ? true : a.1.modified < b.1.modified }
+        }
+        return best { $0.title.localizedCaseInsensitiveCompare(t) == .orderedSame }
+            ?? best { MD.aliases($0.text).contains { $0.localizedCaseInsensitiveCompare(t) == .orderedSame } }
     }
 
     /// The note a `[[title]]` means when it's in a folder that's locked away (its title stays readable).
@@ -602,10 +613,10 @@ import UniformTypeIdentifiers
         return nil
     }
 
-    /// Notes with a `[[…]]` to this title.
-    func backlinks(to title: String, excluding nid: UUID) -> [(Folder, Note)] {
+    /// Notes with a `[[…]]` to one of these names (a note's title and aliases), or to a heading in it.
+    func backlinks(to names: [String], excluding nid: UUID) -> [(Folder, Note)] {
         store.liveFolders.flatMap { f in
-            f.notes.filter { $0.id != nid && MD.wikiLinks($0.text).contains { $0.localizedCaseInsensitiveCompare(title) == .orderedSame } }.map { (f, $0) }
+            f.notes.filter { n in n.id != nid && MD.wikiLinks(n.text).contains { t in names.contains { MD.links(t, to: $0) } } }.map { (f, $0) }
         }
     }
 
@@ -623,13 +634,25 @@ import UniformTypeIdentifiers
             guard let title = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "title" })?.value,
                   !title.isEmpty else { return false }
             search = ""
-            if let (fid, n) = resolve(title: title) { route = .note(fid, n.id) }
-            else if let (fid, n) = lockedAwayNote(titled: title) { // there, behind its folder's lock: ask to open it, don't make a copy
+            // What follows # is a heading or a block (^id), unless the whole is a note's title ("C# tips").
+            var (name, heading, block) = (title, String?.none, String?.none)
+            if title.contains("#"), resolve(title: title) == nil, lockedAwayNote(titled: title) == nil {
+                (name, heading, block) = MD.splitLink(title)
+            }
+            func reveal(_ n: Note) {
+                guard heading != nil || block != nil, let line = MD.line(heading: heading, block: block, in: unlocked[n.id] ?? n.text) else { return }
+                whenOpen(n.id) { $0.reveal(line: line) }
+            }
+            if name.isEmpty { // [[#Heading]]: in this note
+                if case .note(let fid, let id) = route, let n = store.note(fid, id) { reveal(n) }
+            }
+            else if let (fid, n) = resolve(title: name) { route = .note(fid, n.id); reveal(n) }
+            else if let (fid, n) = lockedAwayNote(titled: name) { // there, behind its folder's lock: ask to open it, don't make a copy
                 let door = store.chain(fid).first { $0.locked && !store.openFolders.contains($0.id) }?.id ?? fid
                 unlockFolder(door) { [self] in activate(fid, n) }
             }
-            else if !refuseLockedAway(targetFolder(named: nil)), let id = store.addNote(to: targetFolder(named: nil), text: "# \(title)\n") {
-                stub = (id, "# \(title)\n")
+            else if !refuseLockedAway(targetFolder(named: nil)), let id = store.addNote(to: targetFolder(named: nil), text: "# \(name)\n") {
+                stub = (id, "# \(name)\n")
                 route = .note(targetFolder(named: nil), id)
             }
         default:
@@ -645,16 +668,14 @@ import UniformTypeIdentifiers
     }
 
     private func relink(_ old: String, to new: String) {
-        guard old != new, old != "Empty Note", new != "Empty Note",
-              let re = try? NSRegularExpression(pattern: #"\[\[\s*"# + NSRegularExpression.escapedPattern(for: old) + #"\s*(?=\]\]|\|)"#,
-                                                options: .caseInsensitive) else { return }
+        guard old != new, old != "Empty Note", new != "Empty Note" else { return }
         var before: [(UUID, UUID, String)] = []
         for f in store.liveFolders {
             for n in f.notes {
-                let range = NSRange(location: 0, length: (n.text as NSString).length)
-                guard re.firstMatch(in: n.text, range: range) != nil else { continue }
+                let text = MD.relinked(n.text, from: old, to: new) { [self] in resolve(title: $0) != nil }
+                guard text != n.text else { continue }
                 before.append((f.id, n.id, n.text))
-                store.updateNote(f.id, n.id) { $0.text = re.stringByReplacingMatches(in: $0.text, range: range, withTemplate: "[[" + NSRegularExpression.escapedTemplate(for: new)) }
+                store.updateNote(f.id, n.id) { $0.text = text }
             }
         }
         guard !before.isEmpty else { return }

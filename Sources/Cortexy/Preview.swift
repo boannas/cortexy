@@ -279,7 +279,7 @@ final class PreviewController: NSObject {
     /// A folder page's rows: subfolders, then notes (a smart folder's matches; Archive's archived notes).
     func rows(_ c: PreviewModel.Item) -> [Row] {
         func note(_ n: Note) -> Row {
-            let rest = MD.lines(MD.head(n.text, lines: 16).text).drop { $0 == .blank }.dropFirst().first { $0 != .blank && $0 != .fence }
+            let rest = MD.lines(MD.head(n.text, lines: 16).text).filter { !$0.isMeta }.drop { $0 == .blank }.dropFirst().first { $0 != .blank && $0 != .fence }
             let detail = (rest.map(Self.plain) ?? "").replacingOccurrences(of: #"[*_`~]|==|\[\[|\]\]"#, with: "", options: .regularExpression)
             return Row(id: n.id.uuidString, item: .note(n.id), title: n.title, detail: detail)
         }
@@ -307,7 +307,7 @@ final class PreviewController: NSObject {
         case .heading(_, let s), .task(_, let s), .bullet(let s), .numbered(_, let s), .quote(let s), .text(let s), .code(let s): s
         case .image(let alt, _): alt.isEmpty ? "Image" : alt
         case .file(let name, _): name
-        case .blank, .fence: ""
+        case .blank, .fence, .meta: ""
         }
     }
 

@@ -13,6 +13,9 @@ enum MD {
         case image(alt: String, path: String)  // a line that is only `![alt](path)`
         case file(name: String, url: String)   // a line that is only `[name](file://…)`
         case text(String)
+        case meta(String)                      // a line of the YAML frontmatter at the top (Obsidian's properties)
+
+        var isMeta: Bool { if case .meta = self { true } else { false } }
     }
 
     static let taskRegex = try! NSRegularExpression(pattern: #"^(\s*)[-*+] \[([ xX])\] "#)
@@ -67,7 +70,8 @@ enum MD {
     /// Parses every line; the array index is the line index in `text.components(separatedBy: "\n")`.
     static func lines(_ text: String) -> [Line] {
         var inCode = false
-        return text.components(separatedBy: "\n").map { line($0, inCode: &inCode) }
+        let meta = frontmatter(text)?.lines ?? 0
+        return text.components(separatedBy: "\n").enumerated().map { i, l in i < meta ? .meta(l) : line(l, inCode: &inCode) }
     }
 
     /// One line, given whether a code fence above it is still open.
@@ -98,7 +102,7 @@ enum MD {
     /// time (sorting, cards, the palette, reminders), and parsing a long note whole each time froze typing.
     static func title(_ text: String) -> String {
         let ns = text as NSString
-        var inCode = false, start = 0
+        var inCode = false, start = frontmatter(text)?.length ?? 0
         while start <= ns.length {
             let nl = ns.range(of: "\n", options: .literal, range: NSRange(location: start, length: ns.length - start))
             let end = nl.location == NSNotFound ? ns.length : nl.location
@@ -268,6 +272,10 @@ extension MD {
     /// Tags in a note, lowercased, first-seen order.
     static func tags(_ text: String) -> [String] {
         var seen: [String] = []
+        let props = properties(text)
+        for t in (props["tags"] ?? []) + (props["tag"] ?? []) {
+            if let t = tagName(t.hasPrefix("#") ? String(t.dropFirst()) : t), !seen.contains(t) { seen.append(t) }
+        }
         for line in prose(text) {
             let full = NSRange(location: 0, length: (line as NSString).length), links = wikiRegex.matches(in: line, range: full).map(\.range)
             for m in tagRegex.matches(in: line, range: full) where !links.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) {
@@ -288,6 +296,7 @@ extension MD {
 
     /// For the cards: `[[T|shown]]` and `#tag` become Markdown links to `cortexy://`, outside code spans.
     static func linkify(_ s: String) -> String {
+        let s = s.contains("^") ? s.replacingOccurrences(of: #"\s\^[A-Za-z0-9-]+\s*$"#, with: "", options: .regularExpression) : s // a block's ^id
         guard s.contains("[[") || s.contains("#") else { return s }
         return s.components(separatedBy: "`").enumerated().map { i, part in
             guard i % 2 == 0 else { return part } // odd pieces sit between backticks
@@ -355,6 +364,118 @@ enum Link {
         c.host = "open"
         c.queryItems = [URLQueryItem(name: "title", value: title)]
         return c.url!
+    }
+}
+
+// MARK: Frontmatter and link targets
+
+extension MD {
+    /// YAML frontmatter (Obsidian's properties): a `---` first line down to the next `---` or `...` line. Its
+    /// length in UTF-16 (the closing line's break included) and its number of lines; nil when there's none.
+    /// Every line between must read as YAML (`key: value`, `- item`, indented, blank, `#` comment), so a note
+    /// that merely starts with a divider and has another further down isn't taken for one.
+    static func frontmatter(_ text: String) -> (length: Int, lines: Int)? {
+        guard text.hasPrefix("---") else { return nil }
+        let ns = text as NSString
+        var start = 0, n = 0
+        while start <= ns.length, n < 200 {
+            let nl = ns.range(of: "\n", options: .literal, range: NSRange(location: start, length: ns.length - start))
+            let end = nl.location == NSNotFound ? ns.length : nl.location
+            let raw = ns.substring(with: NSRange(location: start, length: end - start))
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if n == 0 {
+                guard line == "---" else { return nil }
+            } else if line == "---" || line == "..." {
+                return (nl.location == NSNotFound ? ns.length : end + 1, n + 1)
+            } else if match(yamlLine, raw) == nil {
+                return nil
+            }
+            guard nl.location != NSNotFound else { return nil }
+            start = end + 1
+            n += 1
+        }
+        return nil
+    }
+    private static let yamlLine = try! NSRegularExpression(pattern: #"^(?:\s*|\s*#.*|\s*- .*|\s*-|\s+\S.*|[^\s:#-][^:]*:(?:\s.*)?)$"#)
+
+    /// The frontmatter's keys (lowercased) and values: `key: value`, `key: [a, b]`, or `key:` above `- a` lines.
+    /// Enough for `tags` and `aliases`; nested YAML is skipped.
+    static func properties(_ text: String) -> [String: [String]] {
+        guard let fm = frontmatter(text), fm.lines > 2 else { return [:] }
+        func clean(_ s: some StringProtocol) -> String {
+            s.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        }
+        var out: [String: [String]] = [:], key: String?
+        for line in text.components(separatedBy: "\n")[1..<(fm.lines - 1)] {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("- "), let k = key {
+                out[k, default: []].append(clean(t.dropFirst(2)))
+                continue
+            }
+            guard !line.hasPrefix(" "), !line.hasPrefix("\t"), let colon = line.firstIndex(of: ":") else { key = nil; continue }
+            let k = clean(line[..<colon]).lowercased(), v = clean(line[line.index(after: colon)...])
+            key = k
+            if v.hasPrefix("["), v.hasSuffix("]") {
+                out[k] = v.dropFirst().dropLast().split(separator: ",").map(clean).filter { !$0.isEmpty }
+            } else if !v.isEmpty {
+                out[k] = [v]
+            }
+        }
+        return out
+    }
+
+    /// Other names a `[[link]]` may use for the note (`aliases:` in its frontmatter).
+    static func aliases(_ text: String) -> [String] {
+        guard text.hasPrefix("---") else { return [] }
+        let p = properties(text)
+        return (p["aliases"] ?? []) + (p["alias"] ?? [])
+    }
+
+    /// A `[[…]]` target's parts: `Note#Heading` → a heading, `Note#^id` → a block (the line ending in ` ^id`).
+    /// An empty title means the note the link is in.
+    static func splitLink(_ target: String) -> (title: String, heading: String?, block: String?) {
+        guard let hash = target.firstIndex(of: "#") else { return (target.trimmingCharacters(in: .whitespaces), nil, nil) }
+        let title = target[..<hash].trimmingCharacters(in: .whitespaces)
+        let rest = target[target.index(after: hash)...]
+        if rest.hasPrefix("^") { return (title, nil, rest.dropFirst().trimmingCharacters(in: .whitespaces)) }
+        return (title, rest.components(separatedBy: "#").last!.trimmingCharacters(in: .whitespaces), nil) // Note#A#B: B
+    }
+
+    /// Whether a `[[target]]` means the note called `name`: all of it, or the part before `#heading`.
+    static func links(_ target: String, to name: String) -> Bool {
+        target.localizedCaseInsensitiveCompare(name) == .orderedSame
+            || target.contains("#") && splitLink(target).title.localizedCaseInsensitiveCompare(name) == .orderedSame
+    }
+
+    /// The line a link's `#heading` or `#^block` points at.
+    static func line(heading: String?, block: String?, in text: String) -> Int? {
+        if let heading {
+            return headings(text).first {
+                $0.title.localizedCaseInsensitiveCompare(heading) == .orderedSame || plainInline($0.title).localizedCaseInsensitiveCompare(heading) == .orderedSame
+            }?.line
+        }
+        guard let block, !block.isEmpty else { return nil }
+        return text.components(separatedBy: "\n").firstIndex {
+            let t = $0.trimmingCharacters(in: .whitespaces)
+            return t == "^" + block || t.hasSuffix(" ^" + block)
+        }
+    }
+
+    /// `text` with `[[old]]`, `[[old|shown]]` and `[[old#heading]]` pointing at `new`, after a rename. `isNote`
+    /// says whether a whole target is a note's own title ("C# tips" is a note, not note "C"'s heading).
+    static func relinked(_ text: String, from old: String, to new: String, isNote: (String) -> Bool = { _ in false }) -> String {
+        guard text.contains("[[") else { return text }
+        let out = NSMutableString(string: text)
+        for m in wikiRegex.matches(in: text, range: NSRange(location: 0, length: out.length)).reversed() {
+            let r = m.range(at: 1), target = (text as NSString).substring(with: r)
+            let t = target.trimmingCharacters(in: .whitespaces)
+            if t.localizedCaseInsensitiveCompare(old) == .orderedSame {
+                out.replaceCharacters(in: r, with: new)
+            } else if let hash = t.firstIndex(of: "#"), splitLink(t).title.localizedCaseInsensitiveCompare(old) == .orderedSame, !isNote(t) {
+                out.replaceCharacters(in: r, with: new + t[hash...])
+            }
+        }
+        return out as String
     }
 }
 

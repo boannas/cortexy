@@ -365,7 +365,7 @@ private func tempDir() -> URL {
 
     // [[links]]: the open folder's note wins; a missing one is created; tags search.
     #expect(nav.resolve(title: "PLAN")?.1.id == plan)
-    #expect(nav.backlinks(to: "Plan", excluding: plan).map(\.1.id) == [list])
+    #expect(nav.backlinks(to: ["Plan"], excluding: plan).map(\.1.id) == [list])
     #expect(nav.suggestions(.link, "gro", excluding: plan) == ["Groceries"])
     #expect(nav.suggestions(.tag, "sh") == ["shop"])
     nav.openLink(Link.note("Brand New"))
@@ -654,6 +654,103 @@ private final class StubImages: URLProtocol {
     #expect(Attachments.imageSoon(at: url)?.size.width == 300)
 
     #expect(MD.head("a\nb\nc\nd", lines: 2) == ("a\nb", false) && MD.head("a\nb", lines: 5) == ("a\nb", true))
+}
+
+/// Notes from Obsidian: YAML frontmatter is kept but isn't the title or shown on cards; its tags and aliases count.
+@Test func frontmatterIsPropertiesNotTheTitle() {
+    let text = "---\ntags: [work, \"#ด่วน\"]\naliases:\n  - Plan B\n  - แผนสำรอง\ncreated: 2026-10-05\n---\n# Real Title\nbody #inline"
+    #expect(MD.frontmatter(text)?.lines == 7)
+    #expect(MD.title(text) == "Real Title")
+    #expect(MD.aliases(text) == ["Plan B", "แผนสำรอง"])
+    #expect(MD.tags(text) == ["work", "ด่วน", "inline"])
+    #expect(MD.lines(text).prefix(7).allSatisfy(\.isMeta) && MD.lines(text)[7] == .heading(1, "Real Title"))
+    // Not frontmatter: prose between two dividers, an unclosed block, a lone divider.
+    #expect(MD.frontmatter("---\nศุกร์นี้ไปตลาด\n---\nx") == nil)
+    #expect(MD.frontmatter("---\ntitle: x\nno end") == nil)
+    #expect(MD.frontmatter("---") == nil && MD.title("---\nศุกร์นี้ไปตลาด\n---") == "---")
+    #expect(MD.frontmatter("---\na: 1\n---") ?? (0, 0) == (12, 3)) // to the end when nothing follows
+}
+
+/// In the editor frontmatter is quiet monospaced text (not a divider and a heading), restyled whole when it
+/// opens or closes; a block's `^id` hides like other markup.
+@MainActor @Test func editorShowsFrontmatterQuietly() {
+    let h = EditorHarness(dir: tempDir())
+    h.tv.load("---\ntitle: x\n---\n# Body ^abc\nmore")
+    h.tv.setSelectedRange(NSRange(location: 0, length: 0))
+    h.tv.restyle(force: true)
+    func font(_ i: Int) -> NSFont { h.tv.textStorage!.attribute(.font, at: i, effectiveRange: nil) as! NSFont }
+    #expect(h.tv.textStorage!.attribute(.cxMarker, at: 0, effectiveRange: nil) == nil) // not drawn as a divider
+    #expect(font(5).isFixedPitch)
+    let id = (h.tv.string as NSString).range(of: "^abc").location
+    #expect(font(id).pointSize < 1) // hidden while the caret is elsewhere
+    // Removing the closing line ends the frontmatter: the lines under the opening one are plain again.
+    let close = (h.tv.string as NSString).range(of: "---\n#")
+    h.tv.setSelectedRange(NSRange(location: close.location, length: 4))
+    h.tv.insertText("", replacementRange: h.tv.selectedRange())
+    for _ in 0..<5 { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    h.tv.restyle()
+    #expect(!font(5).isFixedPitch)
+}
+
+/// `[[Note#Heading]]` and `[[Note#^id]]` point inside a note; renaming the note keeps the part after `#`.
+@Test func linksToHeadingsAndBlocks() {
+    #expect(MD.splitLink("Plan#Budget") == ("Plan", "Budget", nil))
+    #expect(MD.splitLink("Plan#^abc-1") == ("Plan", nil, "abc-1"))
+    #expect(MD.splitLink("#Top") == ("", "Top", nil))
+    #expect(MD.splitLink("Plan#A#B").heading == "B")
+    #expect(MD.links("plan#Budget", to: "Plan") && MD.links("Plan", to: "PLAN") && !MD.links("Planning", to: "Plan"))
+    let text = "# Plan\n\n## **Budget**\nmoney\n- milk ^grocery\n"
+    #expect(MD.line(heading: "budget", block: nil, in: text) == 2)
+    #expect(MD.line(heading: nil, block: "grocery", in: text) == 4)
+    #expect(MD.line(heading: "nope", block: nil, in: text) == nil)
+    #expect(MD.relinked("see [[Plan#Budget]], [[plan|it]], [[Plan]] and [[Planning]]", from: "Plan", to: "แผน")
+            == "see [[แผน#Budget]], [[แผน|it]], [[แผน]] and [[Planning]]")
+    #expect(MD.relinked("[[C# tips]]", from: "C", to: "D") { $0 == "C# tips" } == "[[C# tips]]") // a note of its own
+    #expect(MD.linkify("milk ^grocery") == "milk")
+}
+
+@MainActor @Test func aliasesAndHeadingLinksResolve() {
+    let s = Store(testing: tempDir())
+    let nav = Nav(store: s)
+    let plan = s.addNote(to: Folder.rootID, text: "---\naliases: [Plan B]\n---\n# Plan\n## Budget\n## Team")!
+    let other = s.addNote(to: Folder.rootID, text: "# Other\nsee [[plan b]] and [[Plan#Budget]]")!
+    _ = other
+    #expect(nav.resolve(title: "Plan B")?.1.id == plan)
+    #expect(nav.backlinks(to: ["Plan", "Plan B"], excluding: plan).count == 1)
+    #expect(nav.suggestions(.link, "Plan#bu", excluding: other) == ["Plan#Budget"])
+    #expect(nav.suggestions(.link, "plan b", excluding: other).contains("Plan B"))
+    nav.openLink(Link.note("Plan#Team"))
+    #expect(nav.route == .note(Folder.rootID, plan) && s.folders.flatMap(\.notes).count == 3) // no stub "Plan#Team"
+    nav.openLink(Link.note("Missing#Somewhere"))
+    if case .note(let f, let n) = nav.route { #expect(s.note(f, n)?.text == "# Missing\n") }
+}
+
+/// Following `[[Note#Heading]]` opens the note with the caret on that heading.
+@MainActor @Test func headingLinkRevealsTheHeading() async throws {
+    await PanelGate.enter()
+    defer { PanelGate.leave() }
+    Prefs.register()
+    let dir = tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let s = Store(testing: dir)
+    let nav = Nav(store: s)
+    let text = "# Long\n" + (1...60).map { "line \($0)" }.joined(separator: "\n") + "\n## Target\nhere"
+    let long = s.addNote(to: Folder.rootID, text: text)!
+    let host = NSHostingView(rootView: RootView(nav: nav).frame(width: 360, height: 500))
+    host.frame = NSRect(x: 0, y: 0, width: 360, height: 500)
+    let win = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+    win.contentView = host
+    win.makeKeyAndOrderFront(nil)
+    nav.openLink(Link.note("Long#target"))
+    let at = (text as NSString).range(of: "## Target").location
+    var tv: MarkdownTextView?
+    for _ in 0..<80 {
+        host.layoutSubtreeIfNeeded()
+        tv = editorIn(host)
+        if let tv, tv.noteID == long, tv.selectedRange().location == at { break }
+        try await Task.sleep(for: .milliseconds(50))
+    }
+    #expect(tv?.selectedRange().location == at)
 }
 
 @MainActor private func editorIn(_ v: NSView) -> MarkdownTextView? {

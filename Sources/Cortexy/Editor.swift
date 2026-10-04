@@ -92,6 +92,7 @@ enum Styler {
     static let mark = re(#"==(?=\S)(.{1,500}?)(?<=\S)=="#)
     static let footnoteRef = re(#"\[\^([^\]\s]+)\](?!:)"#)
     static let footnoteDef = re(#"^\[\^([^\]\s]+)\]:[ \t]?"#)
+    static let blockID = re(#"(?<=\s)\^[A-Za-z0-9-]+\s*$"#) // `text ^id`: what [[Note#^id]] points at
     static let detector = try! NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
     static let codeBackground = NSColor.labelColor.withAlphaComponent(0.07)
 
@@ -150,7 +151,11 @@ enum Styler {
     static func style(_ storage: NSTextStorage, active: NSRange, _ st: TextStyle, in range: NSRange? = nil) {
         let ns = storage.string as NSString
         let blocks = st.code ? [] : codeBlocks(storage.string)
-        let full = range.map { wholeBlocks(ns, paragraphs(ns, $0), blocks) } ?? NSRange(location: 0, length: ns.length)
+        let meta = st.code ? 0 : MD.frontmatter(storage.string)?.length ?? 0 // restyles whole, like a code block
+        let full = range.map { r -> NSRange in
+            let out = wholeBlocks(ns, paragraphs(ns, r), blocks)
+            return out.location < meta ? NSUnionRange(out, NSRange(location: 0, length: meta)) : out
+        } ?? NSRange(location: 0, length: ns.length)
         // Attachments carry their own attributes; keep them across the reset below.
         var kept: [(NSRange, [NSAttributedString.Key: Any])] = []
         storage.enumerateAttribute(.attachment, in: full) { v, r, _ in
@@ -178,6 +183,10 @@ enum Styler {
 
             if st.code { // Code Mode: all of it is code, so no headings, bullets or checkboxes; just its colors
                 for (r, kind) in Syntax.tokens(line, lang: "") { storage.addAttribute(.foregroundColor, value: kind.color, range: shift(r)) }
+                return
+            }
+            if range.location < meta { // frontmatter: kept, quieter
+                storage.addAttributes([.font: st.monoFont(st.size - 2), .foregroundColor: NSColor.secondaryLabelColor], range: range)
                 return
             }
             if MD.match(fence, line) != nil {
@@ -454,6 +463,10 @@ enum Styler {
             markup(at(NSRange(location: m.range.location, length: 2)))
             markup(at(NSRange(location: NSMaxRange(m.range) - 1, length: 1)))
         }
+        each(blockID) { m, at in
+            guard !inCode(m.range) else { return }
+            markup(at(m.range))
+        }
         each(hex) { m, at in
             guard let c = NSColor(hex: (line as NSString).substring(with: m.range)) else { return }
             let light = (c.redComponent * 0.299 + c.greenComponent * 0.587 + c.blueComponent * 0.114) > 0.6
@@ -590,7 +603,7 @@ final class MarkdownTextView: NSTextView {
     private var offered: [String] = []
     private var dirty: NSRange?    // edited since the last restyle
     private var unconverted: NSRange? // edited since the last look for typed attachments
-    private var fenceCount = 0
+    private var fenceCount = 0, metaLines = 0
 
     // MARK: Markdown ⇄ text storage
 
@@ -724,7 +737,7 @@ final class MarkdownTextView: NSTextView {
         let ns = string as NSString
         let active = previewing ? NSRange(location: NSNotFound, length: 0)
             : ns.paragraphRange(for: NSRange(location: min(selectedRange().location, ns.length), length: 0))
-        let fences = Styler.fences(string, before: ns.length)
+        let fences = Styler.fences(string, before: ns.length), meta = style.code ? 0 : MD.frontmatter(string)?.lines ?? 0
         // Asked from inside the layout manager's handling of an edit (the caret moved because of it), restyling
         // beyond the paragraphs being edited — a whole table going from source to aligned, say — leaves it drawing
         // the glyphs of the old fonts (a table left with Return came out as rubbish). That waits for the edit to
@@ -742,7 +755,7 @@ final class MarkdownTextView: NSTextView {
                 restyle(force: forced)
             }
         }
-        if force || fences != fenceCount {
+        if force || fences != fenceCount || meta != metaLines { // frontmatter appearing or ending changes the lines in it
             if editing { return afterTheEdit(force) }
             Styler.style(storage, active: active, style)
         } else {
@@ -760,6 +773,7 @@ final class MarkdownTextView: NSTextView {
         dirty = nil
         lastActive = active
         fenceCount = fences
+        metaLines = meta
         typingAttributes = Styler.base(style)
         needsDisplay = true
     }
