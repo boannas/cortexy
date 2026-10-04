@@ -1580,6 +1580,67 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(nav.search.isEmpty && nav.palette == .commands && nav.paletteQuery == "go")
 }
 
+/// ⌥⌘↑ / ⌥⌘↓ swap the selected lines with their neighbour; the selection rides along.
+@Test func movingLines() {
+    func run(_ t: String, _ sel: NSRange, up: Bool) -> (String, NSRange)? {
+        guard let p = MD.moveLines(t, sel, up: up) else { return nil }
+        let ns = t as NSString
+        return (ns.replacingCharacters(in: p.range, with: ns.substring(with: p.order[0]) + "\n" + ns.substring(with: p.order[1])), p.selection)
+    }
+    #expect(run("a\nb\nc", NSRange(location: 2, length: 0), up: true)! == ("b\na\nc", NSRange(location: 0, length: 0)))
+    #expect(run("a\nb\nc", NSRange(location: 2, length: 0), up: false)! == ("a\nc\nb", NSRange(location: 4, length: 0)))
+    #expect(run("a\nb", NSRange(location: 0, length: 0), up: true) == nil && run("a\nb", NSRange(location: 2, length: 0), up: false) == nil)
+    // Two lines selected (ending at the next line's start, which stays put) move as one.
+    #expect(run("ก\nข\nค\nง", NSRange(location: 2, length: 4), up: true)! == ("ข\nค\nก\nง", NSRange(location: 0, length: 4)))
+}
+
+@Test func quickCopyTakesTheThingClicked() {
+    let t = "# **Big** idea\n- [ ] buy milk\n> one\n> two\nplain\n```swift\nlet a = 1\nlet b = 2\n```"
+    #expect(MD.quickCopy(t, line: 0) == "Big idea")
+    #expect(MD.quickCopy(t, line: 1) == "buy milk")
+    #expect(MD.quickCopy(t, line: 3) == "one\ntwo")
+    #expect(MD.quickCopy(t, line: 4) == nil)
+    #expect(MD.quickCopy(t, line: 6) == "let a = 1\nlet b = 2" && MD.quickCopy(t, line: 5) == MD.quickCopy(t, line: 8))
+}
+
+@MainActor @Test func editorMovesLinesWithTheirImages() throws {
+    let dir = tempDir()
+    let h = EditorHarness(dir: dir)
+    let img = try pngFile(in: dir)
+    let pic = "![](\(img))"
+    h.tv.load("top\n\(pic)\nend")
+    h.tv.setSelectedRange(NSRange(location: 0, length: 0))
+    h.tv.cxMoveDown(nil)
+    #expect(h.tv.markdown() == "\(pic)\ntop\nend")
+    h.tv.cxMoveDown(nil)
+    #expect(h.tv.markdown() == "\(pic)\nend\ntop")
+    h.undo.undo() // both moves (one event here: no run loop between them)
+    #expect(h.tv.markdown() == "top\n\(pic)\nend")
+}
+
+/// Kept open, the panel stays when another window takes the focus; Esc still closes it. Hidden from capture,
+/// its windows are left out of screen sharing.
+@MainActor @Test func panelKeptOpenAndHiddenFromCapture() async throws {
+    await PanelGate.enter()
+    defer { PanelGate.leave() }
+    Prefs.register()
+    defer { for k in [Prefs.keepOpen, Prefs.hideFromCapture] { UserDefaults.standard.removeObject(forKey: k) } }
+    let c = PanelController(store: Store(testing: tempDir()))
+    c.show(byHover: false)
+    UserDefaults.standard.set(true, forKey: Prefs.keepOpen)
+    NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: c.panel)
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(c.shown)
+    UserDefaults.standard.set(true, forKey: Prefs.hideFromCapture)
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(c.panel.sharingType == .none)
+    UserDefaults.standard.set(false, forKey: Prefs.keepOpen)
+    c.panel.resignKey()
+    NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: c.panel)
+    for _ in 0..<20 where c.shown { try await Task.sleep(for: .milliseconds(50)) }
+    #expect(!c.shown)
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {

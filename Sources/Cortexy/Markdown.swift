@@ -479,6 +479,59 @@ extension MD {
     }
 }
 
+// MARK: Moving lines and quick copy
+
+extension MD {
+    /// ⌥⌘↑ / ⌥⌘↓: the selected lines swap with the line above or below. What to replace, the two pieces in their
+    /// new order (joined by a line break), and where the selection goes; nil at the top or bottom.
+    static func moveLines(_ text: String, _ sel: NSRange, up: Bool) -> (range: NSRange, order: [NSRange], selection: NSRange)? {
+        let ns = text as NSString
+        func line(at loc: Int) -> NSRange { // without its line break
+            let p = ns.paragraphRange(for: NSRange(location: min(max(0, loc), ns.length), length: 0))
+            let brk = p.length > 0 && ns.character(at: NSMaxRange(p) - 1) == 10
+            return NSRange(location: p.location, length: p.length - (brk ? 1 : 0))
+        }
+        var end = NSMaxRange(sel)
+        if sel.length > 0, ns.character(at: end - 1) == 10 { end -= 1 } // a selection up to a line's start leaves that line
+        let first = line(at: sel.location), last = line(at: end)
+        let block = NSRange(location: first.location, length: NSMaxRange(last) - first.location)
+        if up {
+            guard block.location > 0 else { return nil }
+            let prev = line(at: block.location - 1)
+            return (NSRange(location: prev.location, length: NSMaxRange(block) - prev.location), [block, prev],
+                    NSRange(location: sel.location - prev.length - 1, length: sel.length))
+        }
+        guard NSMaxRange(block) < ns.length else { return nil }
+        let next = line(at: NSMaxRange(block) + 1)
+        return (NSRange(location: block.location, length: NSMaxRange(next) - block.location), [next, block],
+                NSRange(location: sel.location + next.length + 1, length: sel.length))
+    }
+
+    /// ⌘-click copies the thing under the pointer: a code block's code, a heading's text, a list item's text, a
+    /// whole quote. nil for a plain paragraph (the click does what it always did).
+    static func quickCopy(_ text: String, line i: Int) -> String? {
+        let raw = text.components(separatedBy: "\n"), parsed = lines(text)
+        guard parsed.indices.contains(i) else { return nil }
+        switch parsed[i] {
+        case .code, .fence: // the block it's in, fence to fence (an unclosed one runs to the end)
+            let fences = parsed.indices.filter { parsed[$0] == .fence }
+            for k in stride(from: 0, to: fences.count, by: 2) {
+                let open = fences[k], close = k + 1 < fences.count ? fences[k + 1] : parsed.count
+                if open <= i && i <= close { return raw[(open + 1)..<max(open + 1, close)].joined(separator: "\n") }
+            }
+            return nil
+        case .heading(_, let s): return plainInline(s).trimmingCharacters(in: .whitespaces)
+        case .task(_, let s), .bullet(let s), .numbered(_, let s): return s
+        case .quote:
+            var top = i, bottom = i
+            while top > 0, case .quote = parsed[top - 1] { top -= 1 }
+            while bottom + 1 < parsed.count, case .quote = parsed[bottom + 1] { bottom += 1 }
+            return parsed[top...bottom].map { if case .quote(let q) = $0 { q } else { "" } }.joined(separator: "\n")
+        default: return nil
+        }
+    }
+}
+
 // MARK: Search queries
 
 /// What the search box, smart folders and `cortexy://search` understand:

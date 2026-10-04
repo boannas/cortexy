@@ -132,6 +132,7 @@ struct RootView: View {
 
 struct Header: View {
     @Bindable var nav: Nav
+    @AppStorage(Prefs.keepOpen) private var keepOpen = false
 
     var body: some View {
         let showsBack = nav.route != .home || !nav.search.isEmpty
@@ -141,6 +142,10 @@ struct Header: View {
                 .font(.system(size: 15, weight: .semibold))
                 .padding(.leading, showsBack ? 2 : 8)
             Spacer(minLength: 8)
+            if keepOpen { // kept open: says so, and a click lets it close again
+                ChromeButton(symbol: "pin.circle.fill", help: "The panel stays open — click to let it close (⇧⌘P)") { keepOpen = false }
+                    .foregroundStyle(Color.cortexyAccent)
+            }
             trailing
         }
         .padding(.horizontal, 8)
@@ -834,8 +839,10 @@ struct ColorMenu: View {
 struct QuickSettingsMenu: View {
     @AppStorage(Prefs.hotSide) private var hotSide = true
     @AppStorage(Prefs.side) private var side = "right"
+    @AppStorage(Prefs.keepOpen) private var keepOpen = false
 
     var body: some View {
+        Toggle("Keep Panel Open", isOn: $keepOpen).keyboardShortcut("p", modifiers: [.command, .shift])
         Toggle("Open at Screen Edge", isOn: $hotSide)
         Picker("Screen Edge", selection: $side) {
             Text("Right").tag("right")

@@ -32,6 +32,7 @@ final class NoteWindows: NSObject, NSWindowDelegate {
         w.isOpaque = false
         w.backgroundColor = .clear
         w.minSize = NSSize(width: 220, height: 160)
+        w.sharingType = Prefs.sharing
         w.delegate = self
         w.contentView = FirstMouseHostingView(rootView: NoteWindowView(nav: nav, nid: nid))
         // Where it was last time; else beside the panel, a little further along for each one open.

@@ -97,12 +97,21 @@ enum Prefs {
     static let webImages = "webImages"                 // fetch web images in every note (else each note asks: WebImages.allows)
     static let reminders = "reminders", remindAt = "remindAt" // remindAt: the hour for due dates without a time
     static let touchID = "touchID", lockOnHide = "lockOnHide"
+    static let keepOpen = "keepOpen"                   // the panel stays up when you click elsewhere or the pointer leaves
+    static let panelOpacity = "panelOpacity"           // 1 = solid; lower lets what's behind show through
+    static let hideFromCapture = "hideFromCapture"     // screen sharing, recordings and screenshots leave Cortexy's windows out
+    static let quickLook = "quickLook"                 // double-clicking an attachment previews it (else opens it in its app)
+
+    static var keptOpen: Bool { UserDefaults.standard.bool(forKey: keepOpen) }
+    /// For every window of ours: none while hidden from capture.
+    static var sharing: NSWindow.SharingType { UserDefaults.standard.bool(forKey: hideFromCapture) ? .none : .readOnly }
 
     static let defaults: [String: Any] = [
         hotSide: true, side: "right", width: 360.0, edgeDelay: 0.15, openBar: false, menuBarIcon: true, hoverPreview: true,
         hideDelay: 0.35, previewDelay: 0.45, previewHideDelay: 0.2, previewWidth: 0.0, undoSeconds: 5.0, showTags: true,
         codeTab: 4, trashDays: 30, backupsKept: 14,
         templatesFolder: "Templates", dailyFolder: "Daily", dailyTemplate: "", dateFormat: "yyyy-MM-dd", todayKey: "", systemCalendar: false, versionsKept: 50, webImages: false, reminders: true, remindAt: 9, touchID: false, lockOnHide: true,
+        keepOpen: false, panelOpacity: 1.0, hideFromCapture: false, quickLook: true,
         toggleKey: HotKeySpec(keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), display: "⌃⌥N").encoded,
         newNoteKey: "",
     ]
@@ -155,6 +164,7 @@ final class PanelController: NSObject {
         panel.hasShadow = false // a window shadow outlines the square frame; the glass edge is enough
         panel.animationBehavior = .none
         panel.acceptsMouseMovedEvents = true
+        panel.sharingType = Prefs.sharing
         let host = FirstMouseHostingView(rootView: PanelFrame(layout: layout, root: RootView(nav: nav)))
         host.sizingOptions = [] // we own the window frame; don't let SwiftUI resize it
         host.dropHandler = { [weak self] in self?.nav.importPasteboard($0) ?? false }
@@ -257,7 +267,7 @@ final class PanelController: NSObject {
         settleWork?.cancel(); settling = false
         swipe = .undecided
         panel.setFrame(on, display: false)
-        panel.alphaValue = 1
+        panel.alphaValue = Prefs.number(Prefs.panelOpacity)
         if reopening {
             withAnimation(Motion.card) { layout.out = false; layout.drag = 0; layout.height = height }
         } else {
@@ -440,6 +450,8 @@ final class PanelController: NSObject {
         if reminders != lastReminderSettings { lastReminderSettings = reminders; nav.scheduleReminders() }
         registerHotKeys()
         openBar.update(visible: !shown)
+        if shown { panel.alphaValue = Prefs.number(Prefs.panelOpacity) }
+        for w in NSApp.windows where w.sharingType != Prefs.sharing { w.sharingType = Prefs.sharing }
         // Any setting written fires this (the last route, folded folders…): only a change of width, side or
         // screens moves the panel, and never while the card is mid-spring.
         let look = "\(Prefs.number(Prefs.width))\(Prefs.isLeft)\(NSScreen.screens.map(\.frame))"
@@ -453,10 +465,10 @@ final class PanelController: NSObject {
     }
     private var lastLook = ""
 
-    /// Clicking anywhere else closes the panel (our own sheets, menus and dialogs don't count).
+    /// Clicking anywhere else closes the panel (our own sheets, menus and dialogs don't count), unless it's kept open.
     @objc private func resignedKey() {
         DispatchQueue.main.async { [self] in
-            guard shown, holdOpen == 0, !panel.isKeyWindow, panel.attachedSheet == nil else { return }
+            guard shown, holdOpen == 0, !Prefs.keptOpen, !panel.isKeyWindow, panel.attachedSheet == nil else { return }
             if SettingsWindow.isKey { return } // stays up to show settings changes live
             if let k = NSApp.keyWindow, k.sheetParent === panel || k.parent === panel { return }
             hide()
@@ -495,7 +507,7 @@ final class PanelController: NSObject {
         if shown {
             // Opened by hover and never clicked: slide away once the pointer leaves.
             // Not while our own sheet or prompt is up (it holds the focus, so the panel isn't key), or Settings is.
-            guard openedByHover, !panel.isKeyWindow, NSEvent.pressedMouseButtons == 0, holdOpen == 0, panel.attachedSheet == nil, !SettingsWindow.isKey else { return }
+            guard openedByHover, !Prefs.keptOpen, !panel.isKeyWindow, NSEvent.pressedMouseButtons == 0, holdOpen == 0, panel.attachedSheet == nil, !SettingsWindow.isKey else { return }
             if cardRect.insetBy(dx: -24, dy: -24).contains(p) || atEdge(p) || preview.contains(p) { cancelPending(); return }
             if pending == nil { schedule(Prefs.number(Prefs.hideDelay)) { [weak self] in self?.hide() } }
             return
@@ -561,6 +573,9 @@ final class PanelController: NSObject {
             return true
         }
         let mods = e.modifierFlags.intersection([.command, .shift, .option, .control])
+        if mods == [.command, .option], e.keyCode == UInt16(kVK_UpArrow) || e.keyCode == UInt16(kVK_DownArrow), w.firstResponder is MarkdownTextView {
+            return NSApp.sendAction(e.keyCode == UInt16(kVK_UpArrow) ? #selector(MarkdownTextView.cxMoveUp(_:)) : #selector(MarkdownTextView.cxMoveDown(_:)), to: nil, from: w)
+        }
         guard mods == .command || mods == [.command, .shift], let key = key(e) else { return false }
         let shift = mods.contains(.shift)
         // A note in its own window gets the editor's formatting keys too.
@@ -687,6 +702,9 @@ final class PanelController: NSObject {
             nav.deleteSelection()
             return true
         }
+        if mods == [.command, .option], code == kVK_UpArrow || code == kVK_DownArrow, isEditingNote, inText {
+            return NSApp.sendAction(code == kVK_UpArrow ? #selector(MarkdownTextView.cxMoveUp(_:)) : #selector(MarkdownTextView.cxMoveDown(_:)), to: nil, from: panel)
+        }
         guard mods.contains(.command), !mods.contains(.control), !mods.contains(.option), let key = Self.key(e) else { return false }
         let shift = mods.contains(.shift)
 
@@ -702,6 +720,7 @@ final class PanelController: NSObject {
         case ("o", false): nav.palette = .open
         case ("p", false): nav.palette = .commands
         case ("g", false): GraphWindow.shared.show(nav: nav)
+        case ("p", true): UserDefaults.standard.set(!Prefs.keptOpen, forKey: Prefs.keepOpen)
         // In a note ⌘[ / ⌘] move lines out and in (Notes, Pages); elsewhere ⌘[ is Back (← too, and the back button).
         case ("[", false) where isEditingNote && inText: return NSApp.sendAction(#selector(MarkdownTextView.cxOutdent(_:)), to: nil, from: panel)
         case ("]", false) where isEditingNote && inText: return NSApp.sendAction(#selector(MarkdownTextView.cxIndent(_:)), to: nil, from: panel)

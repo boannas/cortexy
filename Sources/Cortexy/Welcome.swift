@@ -102,7 +102,12 @@ enum Welcome {
         let note = "colored by language"
         print(note)
         ```
-        Right-click a note → **Code Mode** turns the whole note into code.
+        Right-click a note → **Code Mode** turns the whole note into code. The ⧉ at a code block's corner copies it.
+
+        ## Quick moves
+        - **⌥⌘↑ / ⌥⌘↓** move the line (or the selected lines) up and down
+        - **⌘-click** a code block, heading, list item or quote copies it; **⌥⌘-click** copies a link
+        - Double-click an attached file or image to preview it with Quick Look
 
         ---
         The bar under the editor has all of this; its **More Formatting** button adds headings, a code block, a divider, images and screenshots.
@@ -186,6 +191,7 @@ enum Welcome {
         - Click a preview to open the note in the panel
         - Right-click a note → **Open in Window**: a floating window that stays on top and comes back after a restart
         - Settings → General: the delays, the width, or no preview at all
+        - **⇧⌘P** keeps the panel open while you work in other apps (the pin in its header lets it close again); Settings → General also sets its opacity
 
         Next: [[Templates and daily notes]]
         """,
@@ -215,6 +221,9 @@ enum Welcome {
         - **Version history**: right-click → Version History…; rest on a version to see it, Restore (and Undo)
         - Daily backups in the data folder; **Export…** writes every note as a Markdown file
         - Put the data folder in iCloud Drive to share notes between Macs (Settings → Data)
+
+        ## Screen sharing
+        Settings → General → **Hide Cortexy from screen sharing and recordings** leaves its windows out of meetings, recordings and screenshots.
 
         ## Web images
         Images from the web wait until you press **Load** in their note: fetching one tells its server you opened the note.
@@ -283,7 +292,12 @@ enum Welcome {
         let note = "สีตามภาษา"
         print(note)
         ```
-        คลิกขวาที่โน้ต → **Code Mode** เพื่อให้ทั้งโน้ตเป็นโค้ด
+        คลิกขวาที่โน้ต → **Code Mode** เพื่อให้ทั้งโน้ตเป็นโค้ด ปุ่ม ⧉ ที่มุม code block คัดลอกโค้ดนั้น
+
+        ## ทางลัด
+        - **⌥⌘↑ / ⌥⌘↓** ย้ายบรรทัด (หรือบรรทัดที่เลือก) ขึ้นลง
+        - **⌘-click** ที่ code block หัวข้อ รายการ หรือ quote เพื่อคัดลอก · **⌥⌘-click** คัดลอกลิงก์
+        - ดับเบิลคลิกไฟล์แนบหรือรูปเพื่อดูด้วย Quick Look
 
         ---
         แถบใต้ editor มีทุกอย่างนี้ ปุ่ม **More Formatting** มีหัวข้อ code block เส้นคั่น รูป และภาพหน้าจอเพิ่ม
@@ -369,6 +383,7 @@ enum Welcome {
         - คลิก preview เพื่อเปิดโน้ตใน panel
         - คลิกขวาโน้ต → **Open in Window** เป็นหน้าต่างลอยอยู่บนสุด เปิดแอปใหม่ก็ยังอยู่
         - Settings → General: ตั้งเวลา ความกว้าง หรือปิด preview
+        - **⇧⌘P** ให้ panel ค้างไว้ระหว่างทำงานในแอปอื่น (กดหมุดที่หัว panel เพื่อให้ปิดได้อีกครั้ง) และปรับความโปร่งใสได้ใน Settings → General
 
         ถัดไป: [[Template และโน้ตประจำวัน]]
         """,
@@ -398,6 +413,9 @@ enum Welcome {
         - **ประวัติเวอร์ชัน**: คลิกขวา → Version History… พักเมาส์ดูแต่ละเวอร์ชัน แล้ว Restore (Undo ได้)
         - backup ทุกวันในโฟลเดอร์ข้อมูล **Export…** เขียนทุกโน้ตออกเป็นไฟล์ Markdown
         - ย้ายโฟลเดอร์ข้อมูลไปไว้ใน iCloud Drive เพื่อใช้โน้ตร่วมกันหลายเครื่อง (Settings → Data)
+
+        ## แชร์จอ
+        Settings → General → **Hide Cortexy from screen sharing and recordings** ซ่อนหน้าต่างของ Cortexy จากการประชุม การอัดจอ และ screenshot
 
         ## รูปจากเว็บ
         รูปจากเว็บจะรอให้กด **Load** ในโน้ตนั้นก่อน เพราะการโหลดจะบอกเว็บต้นทางว่าคุณเปิดโน้ต

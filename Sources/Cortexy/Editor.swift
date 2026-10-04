@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 import SwiftUI
 
 extension NSAttributedString.Key {
@@ -814,8 +815,31 @@ final class MarkdownTextView: NSTextView {
         return out
     }
 
+    /// Each code block's copy button (drawn at its opening fence's right end), for clicks; set as it's drawn.
+    private var codeButtons: [(rect: NSRect, body: NSRange)] = []
+    private var copied: (at: Int, when: Date)?
+
+    private func drawCodeButtons(_ dirtyRect: NSRect) {
+        codeButtons = []
+        guard fenceCount > 0, !style.code, let lm = layoutManager, let tc = textContainer else { return }
+        let look = "\(effectiveAppearance.name.rawValue)|\(window?.backingScaleFactor ?? 2)"
+        for b in Styler.codeBlocks(string) where b.body.length > 0 {
+            let g = lm.glyphIndexForCharacter(at: b.whole.location)
+            let frag = lm.lineFragmentRect(forGlyphAt: g, effectiveRange: nil)
+            let r = NSRect(x: textContainerOrigin.x + tc.size.width - tc.lineFragmentPadding - 18, y: frag.midY + textContainerOrigin.y - 8, width: 16, height: 16)
+            codeButtons.append((r, b.body))
+            guard r.intersects(dirtyRect) else { continue }
+            let done = copied.map { $0.at == b.body.location && Date().timeIntervalSince($0.when) < 1.2 } ?? false
+            let name = done ? "checkmark" : "doc.on.doc"
+            guard let img = markerImage(name, size: style.size - 2, colors: [done ? style.checkColor : .tertiaryLabelColor], key: "\(name)|\(style.size)|\(look)") else { continue }
+            img.draw(in: NSRect(x: r.midX - img.size.width / 2, y: r.midY - img.size.height / 2, width: img.size.width, height: img.size.height),
+                     from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        if !previewing { drawCodeButtons(dirtyRect) }
         // As drawn now (a system accent color changes without the style changing).
         let look = "\(effectiveAppearance.name.rawValue)|\(window?.backingScaleFactor ?? 2)|\(style.checkColor.usingColorSpace(.sRGB).map { "\($0)" } ?? "")"
         for m in markers() where m.rect.intersects(dirtyRect) {
@@ -912,6 +936,14 @@ final class MarkdownTextView: NSTextView {
             if let st = textStorage, i < st.length, st.attribute(.link, at: i, effectiveRange: nil) != nil { return super.mouseDown(with: event) }
             return onPreviewClick()
         }
+        if let b = codeButtons.first(where: { $0.rect.insetBy(dx: -4, dy: -4).contains(p) }) {
+            copyToPasteboard(markdown(in: b.body))
+            copied = (b.body.location, Date())
+            needsDisplay = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) { [weak self] in self?.needsDisplay = true }
+            return
+        }
+        if event.modifierFlags.contains(.command), event.clickCount == 1, quickCopy(at: p, link: event.modifierFlags.contains(.option)) { return }
         if let hit = markers().first(where: { ($0.kind == "task" || $0.kind == "done") && $0.rect.contains(p) }) {
             // "- [ ] " → the box character is 3 UTF-16 units in
             let box = NSRange(location: hit.range.location + 3, length: 1)
@@ -928,10 +960,61 @@ final class MarkdownTextView: NSTextView {
             }
         }
         if event.clickCount == 2, let url = attachmentURL(at: p) {
-            NSWorkspace.shared.open(url)
+            if UserDefaults.standard.object(forKey: Prefs.quickLook) as? Bool ?? true { quickLook(url) } else { NSWorkspace.shared.open(url) }
             return
         }
         super.mouseDown(with: event)
+    }
+
+    private func copyToPasteboard(_ s: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(s, forType: .string)
+    }
+
+    /// ⌘-click: a code block, heading, list item or quote is copied (and flashes); ⌥⌘-click copies a link.
+    /// Anything else (a plain paragraph, a link without ⌥) is left to the usual click.
+    private func quickCopy(at p: NSPoint, link: Bool) -> Bool {
+        guard let st = textStorage, st.length > 0 else { return false }
+        let i = min(characterIndexForInsertion(at: p), st.length - 1)
+        let target = st.attribute(.link, at: i, effectiveRange: nil)
+        if link, let url = target as? URL {
+            let title = url.host == "open" ? URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value.map { "[[\($0)]]" } : nil
+            copyToPasteboard(title ?? url.absoluteString)
+            var r = NSRange()
+            _ = st.attribute(.link, at: i, effectiveRange: &r)
+            showFindIndicator(for: r)
+            return true
+        }
+        guard target == nil else { return false }
+        let ns = string as NSString
+        let line = ns.substring(to: i).components(separatedBy: "\n").count - 1
+        guard let text = MD.quickCopy(markdown(), line: line) else { return false }
+        copyToPasteboard(text)
+        showFindIndicator(for: ns.paragraphRange(for: NSRange(location: i, length: 0)))
+        return true
+    }
+
+    // MARK: Quick Look for attachments
+
+    private var lookingAt: URL?
+
+    func quickLook(_ url: URL) {
+        lookingAt = url
+        guard let ql = QLPreviewPanel.shared() else { return }
+        if QLPreviewPanel.sharedPreviewPanelExists(), ql.isVisible { return ql.reloadData() }
+        NSApp.activate()
+        ql.makeKeyAndOrderFront(nil)
+    }
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { lookingAt != nil }
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        PanelController.shared?.holdOpen += 1 // the preview takes the focus; the panel stays
+    }
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        lookingAt = nil
+        PanelController.shared?.holdOpen -= 1
     }
 
     private func attachmentURL(at p: NSPoint) -> URL? {
@@ -1377,6 +1460,19 @@ final class MarkdownTextView: NSTextView {
     }
 
     /// ⌘] / ⌘[ (as in Notes and Pages): the selected lines one level in or out, whatever they are.
+    @objc func cxMoveUp(_ sender: Any?) { moveLines(up: true) }
+    @objc func cxMoveDown(_ sender: Any?) { moveLines(up: false) }
+
+    /// The selected lines trade places with the one above or below; images and files go along.
+    private func moveLines(up: Bool) {
+        guard let st = textStorage, let plan = MD.moveLines(string, selectedRange(), up: up) else { return NSSound.beep() }
+        let new = NSMutableAttributedString(attributedString: st.attributedSubstring(from: plan.order[0]))
+        new.append(NSAttributedString(string: "\n", attributes: Styler.base(style)))
+        new.append(st.attributedSubstring(from: plan.order[1]))
+        replace(plan.range, with: new, select: plan.selection)
+        scrollRangeToVisible(selectedRange())
+    }
+
     @objc func cxIndent(_ sender: Any?) { transformLines { "  " + $0 } }
     @objc func cxOutdent(_ sender: Any?) {
         guard currentLine.hasPrefix(" ") || currentLine.hasPrefix("\t") || selectedRange().length > 0 else { return }
@@ -1687,4 +1783,9 @@ extension Due {
         case .done: .tertiaryLabelColor
         }
     }
+}
+
+extension MarkdownTextView: QLPreviewPanelDataSource {
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { lookingAt == nil ? 0 : 1 }
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! { lookingAt as NSURL? }
 }

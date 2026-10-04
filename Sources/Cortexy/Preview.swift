@@ -46,6 +46,7 @@ final class PreviewController: NSObject {
         window.hasShadow = false // the card draws its own; a window shadow would outline the whole clear strip
         window.hidesOnDeactivate = false
         window.animationBehavior = .none
+        window.sharingType = Prefs.sharing
         // The window never becomes key (the panel keeps focus), so every click is a "first" click: it must act.
         let host = FirstMouseHostingView(rootView: PreviewCard(controller: self))
         host.sizingOptions = [] // we size the window

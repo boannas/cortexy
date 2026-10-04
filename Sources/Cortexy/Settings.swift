@@ -87,6 +87,10 @@ struct GeneralSettings: View {
     @AppStorage(Prefs.dateFormat) private var dateFormat = "yyyy-MM-dd"
     @AppStorage(Prefs.systemCalendar) private var systemCalendar = false
     @AppStorage(Prefs.dateLanguage) private var dateLanguage = ""
+    @AppStorage(Prefs.keepOpen) private var keepOpen = false
+    @AppStorage(Prefs.panelOpacity) private var panelOpacity = 1.0
+    @AppStorage(Prefs.hideFromCapture) private var hideFromCapture = false
+    @AppStorage(Prefs.quickLook) private var quickLook = true
     @Local private var atLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -104,6 +108,10 @@ struct GeneralSettings: View {
                     .help("Only when the pointer opened the panel and you haven't clicked in it")
                 ValueSlider(title: "Width", value: $width, range: 280...560, step: 10) { "\(Int($0)) pt" }
                 Toggle("Show Open Bar on the screen edge", isOn: $openBar)
+                Toggle("Keep the panel open when I click elsewhere (⇧⌘P)", isOn: $keepOpen)
+                ValueSlider(title: "Opacity", value: $panelOpacity, range: 0.4...1, step: 0.05) { "\(Int(($0 * 100).rounded()))%" }
+                Toggle("Hide Cortexy from screen sharing and recordings", isOn: $hideFromCapture)
+                    .help("Its windows are left out of screen sharing, recordings and screenshots, yours included")
             }
             Section {
                 Toggle("Preview a note when the pointer rests on its card", isOn: $hoverPreview)
@@ -129,6 +137,7 @@ struct GeneralSettings: View {
                 }
                 Toggle("Show tags on the home screen", isOn: $showTags)
                 Toggle("Load web images in every note", isOn: $webImages)
+                Toggle("Double-click an attachment to preview it (Quick Look)", isOn: $quickLook)
                     .help("For ![](https://…) in notes. Off, a note's web images load only after you press Load in it: fetching one tells its server you opened the note.")
                 ValueSlider(title: "Undo stays offered for", value: $undoSeconds, range: 2...20, step: 1) { "\(Int($0)) s" }
                 Picker("Tab in code mode", selection: $codeTab) {
@@ -200,7 +209,8 @@ struct GeneralSettings: View {
     static let keys = [Prefs.hotSide, Prefs.side, Prefs.edgeDelay, Prefs.hideDelay, Prefs.width, Prefs.openBar, Prefs.menuBarIcon, "colorStyle",
                        Prefs.hoverPreview, Prefs.previewDelay, Prefs.previewHideDelay, Prefs.previewWidth, Prefs.undoSeconds, Prefs.showTags,
                        Prefs.codeTab, Prefs.webImages, Prefs.reminders, Prefs.remindAt, Prefs.templatesFolder, Prefs.dailyFolder,
-                       Prefs.dailyTemplate, Prefs.dateFormat, Prefs.systemCalendar, Prefs.dateLanguage]
+                       Prefs.dailyTemplate, Prefs.dateFormat, Prefs.systemCalendar, Prefs.dateLanguage,
+                       Prefs.keepOpen, Prefs.panelOpacity, Prefs.hideFromCapture, Prefs.quickLook]
 }
 
 /// A tab's "Restore Defaults": its settings back to how Cortexy comes (asks first).
@@ -537,7 +547,8 @@ struct ShortcutSettings: View {
         ("Move selection / open", "↑ ↓ / ↩"), ("Fold selected note", "Space"), ("Delete selected", "⌘⌫"),
         ("Move note to folder", "⇧⌘M"), ("Select several notes or folders", "⌘-click / ⇧-click / ⌘A"),
         ("Bold / italic / code / link", "⌘B / ⌘I / ⌘E / ⌘K"), ("Checklist / strikethrough", "⌘L / ⇧⌘X"),
-        ("Indent list item", "⇥ / ⇧⇥"), ("Lines in / out in a note", "⌘] / ⌘["), ("Hide panel", "Esc or ⌘W"), ("Settings", "⌘,"),
+        ("Indent list item", "⇥ / ⇧⇥"), ("Lines in / out in a note", "⌘] / ⌘["), ("Move lines up / down", "⌥⌘↑ / ⌥⌘↓"),
+        ("Copy a code block, heading, list item or quote", "⌘-click (a link: ⌥⌘-click)"), ("Keep the panel open", "⇧⌘P"), ("Hide panel", "Esc or ⌘W"), ("Settings", "⌘,"),
     ]
 }
 
