@@ -20,6 +20,7 @@ struct TextStyle: Equatable {
     var family: String?     // an installed font family instead of a system design
     var codeFamily: String? // nil = the system monospaced font
     var code = false
+    var readOnly = false // a note set to Read Only: shown, not edited
     var accent: NSColor?
     var lineSpacing: CGFloat = 2
     var paragraphSpacing: CGFloat = 5
@@ -93,6 +94,35 @@ enum Styler {
     static let mark = re(#"==(?=\S)(.{1,500}?)(?<=\S)=="#)
     static let footnoteRef = re(#"\[\^([^\]\s]+)\](?!:)"#)
     static let footnoteDef = re(#"^\[\^([^\]\s]+)\]:[ \t]?"#)
+    static let callout = re(#"^(\s*>\s*)\[!([A-Za-z-]+)\]([+-]?)[ \t]*"#) // > [!note]- Title
+    /// `==🔴text==` (Obsidian's colored highlights): the emoji at the start picks the color.
+    static let highlightColors: [(String, NSColor)] = [("🔴", .systemRed), ("🟠", .systemOrange), ("🟢", .systemGreen), ("🔵", .systemBlue), ("🟣", .systemPurple)]
+    static func highlight(_ inner: String) -> (color: NSColor, emoji: Int) {
+        for (e, c) in highlightColors where inner.hasPrefix(e) { return (c, (e as NSString).length) }
+        return (.systemYellow, 0)
+    }
+
+    /// The callout a quote paragraph belongs to: its header's type and fold (`-` folded, `+` foldable), the
+    /// header line, and the whole run of `>` lines.
+    static func callout(_ ns: NSString, _ para: NSRange) -> (type: String, fold: String, header: NSRange, run: NSRange)? {
+        func isQuote(_ r: NSRange) -> Bool { MD.match(quote, ns.substring(with: r)) != nil }
+        var top = para, bottom = para
+        while top.location > 0 {
+            let prev = ns.paragraphRange(for: NSRange(location: top.location - 1, length: 0))
+            guard isQuote(prev) else { break }
+            top = prev
+        }
+        let head = ns.substring(with: top)
+        guard let m = MD.match(callout, head) else { return nil }
+        while NSMaxRange(bottom) < ns.length {
+            let next = ns.paragraphRange(for: NSRange(location: NSMaxRange(bottom), length: 0))
+            guard isQuote(next) else { break }
+            bottom = next
+        }
+        let h = head as NSString
+        return (h.substring(with: m.range(at: 2)).lowercased(), h.substring(with: m.range(at: 3)), top, NSUnionRange(top, bottom))
+    }
+
     static let blockID = re(#"(?<=\s)\^[A-Za-z0-9-]+\s*$"#) // `text ^id`: what [[Note#^id]] points at
     static let detector = try! NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
     static let codeBackground = NSColor.labelColor.withAlphaComponent(0.07)
@@ -131,10 +161,10 @@ enum Styler {
         return withTableRows(ns, out)
     }
 
-    /// `r` and the table rows touching it, above and below.
+    /// `r` and the table rows touching it, above and below; and the quote lines (a callout's header styles its body).
     static func withTableRows(_ ns: NSString, _ r: NSRange) -> NSRange {
         var out = r
-        func row(_ p: NSRange) -> Bool { MD.isTableRow(ns.substring(with: p)) }
+        func row(_ p: NSRange) -> Bool { let l = ns.substring(with: p); return MD.isTableRow(l) || MD.match(quote, l) != nil }
         while out.location > 0 {
             let prev = ns.paragraphRange(for: NSRange(location: out.location - 1, length: 0))
             guard row(prev) else { break }
@@ -234,6 +264,43 @@ enum Styler {
                 } else {
                     let dash = NSRange(location: marker.location + lead, length: 1)
                     storage.addAttributes([.foregroundColor: NSColor.clear, .cxMarker: "bullet\(MD.indentLevel(line) % 3)"], range: dash)
+                }
+            } else if MD.match(quote, line) != nil, let co = callout(ns, range) {
+                // A callout: a tinted box (drawn), its header bold in the type's color with an icon; folded (`-`),
+                // its body is out of sight until the caret goes in.
+                let inRun = NSIntersectionRange(co.run, active).length > 0 || NSLocationInRange(active.location, co.run) || active.location == NSMaxRange(co.run)
+                let p = paragraph(st).mutableCopy() as! NSMutableParagraphStyle
+                p.firstLineHeadIndent = 14
+                p.headIndent = 14
+                storage.addAttribute(.paragraphStyle, value: p, range: range)
+                let color = Callouts.color(co.type)
+                if range.location == co.header.location {
+                    let hm = MD.match(callout, line)!
+                    let title = (line as NSString).substring(from: NSMaxRange(hm.range)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    storage.addAttributes([.foregroundColor: color, .font: st.font(weight: .semibold)], range: range)
+                    if editing {
+                        markup(shift(hm.range))
+                        storage.addAttribute(.cxMarker, value: "callout:\(co.type)", range: NSRange(location: range.location, length: 1))
+                    } else {
+                        let typeWord = shift(hm.range(at: 2))
+                        if title.isEmpty { // no title: the type's name stands in (its brackets hidden)
+                            markup(NSRange(location: range.location, length: typeWord.location - range.location))
+                            markup(NSRange(location: NSMaxRange(typeWord), length: NSMaxRange(shift(hm.range)) - NSMaxRange(typeWord)))
+                        } else {
+                            markup(shift(hm.range))
+                        }
+                        storage.addAttribute(.cxMarker, value: "calloutHead:\(co.type):\(co.fold)", range: NSRange(location: range.location, length: 1))
+                        storage.addAttribute(.kern, value: st.size * 1.5, range: NSRange(location: range.location, length: 1)) // room for the icon
+                    }
+                } else if co.fold == "-" && !inRun {
+                    let tiny = NSMutableParagraphStyle()
+                    tiny.minimumLineHeight = 0.01
+                    tiny.maximumLineHeight = 0.01
+                    storage.addAttributes([.font: hiddenFont, .foregroundColor: NSColor.clear, .paragraphStyle: tiny], range: range)
+                    return
+                } else {
+                    markup(shift(MD.match(quote, line)!.range))
+                    storage.addAttribute(.cxMarker, value: "callout:\(co.type)", range: NSRange(location: range.location, length: 1))
                 }
             } else if let m = MD.match(quote, line) {
                 storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: range)
@@ -453,7 +520,9 @@ enum Styler {
         }
         each(mark) { m, at in
             guard !inCode(m.range) else { return }
-            s.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.35), range: at(m.range(at: 1)))
+            let (color, emoji) = highlight((line as NSString).substring(with: m.range(at: 1)))
+            s.addAttribute(.backgroundColor, value: color.withAlphaComponent(0.35), range: at(m.range(at: 1)))
+            if emoji > 0 { markup(at(NSRange(location: m.range(at: 1).location, length: emoji))) }
             markup(at(NSRange(location: m.range.location, length: 2)))
             markup(at(NSRange(location: NSMaxRange(m.range) - 2, length: 2)))
         }
@@ -534,9 +603,10 @@ enum Attachments {
         return NSImage(cgImage: thumb, size: NSSize(width: w * scale, height: h * scale))
     }
 
-    static func imageAttachment(_ img: NSImage, maxWidth: CGFloat) -> NSTextAttachment {
+    /// `width`: what `![alt|300](…)` asks for; otherwise it fits the text's width and 320 pt of height.
+    static func imageAttachment(_ img: NSImage, maxWidth: CGFloat, width: CGFloat? = nil) -> NSTextAttachment {
         let s = img.size
-        let scale = min(1, maxWidth / max(s.width, 1), 320 / max(s.height, 1))
+        let scale = width.map { min($0, maxWidth) / max(s.width, 1) } ?? min(1, maxWidth / max(s.width, 1), 320 / max(s.height, 1))
         let size = NSSize(width: floor(s.width * scale), height: floor(s.height * scale))
         let a = NSTextAttachment()
         a.image = rendered(img, size: size)
@@ -597,7 +667,7 @@ final class MarkdownTextView: NSTextView {
     var importImage: (NSImage) -> String? = { _ in nil }
     private var lastActive = NSRange(location: NSNotFound, length: 0)
     private var converting = false
-    enum Completion { case link, tag }
+    enum Completion { case link, tag, command }
     /// Suggestions for what's typed after `[[` (note titles) or `#` (tags).
     var completionSource: (Completion, String) -> [String] = { _, _ in [] }
     private(set) var completing = false // the suggestion list is up; Esc belongs to it
@@ -626,7 +696,7 @@ final class MarkdownTextView: NSTextView {
                 let open: URL?
                 if isImage {
                     guard let url = resolve(target), let img = Attachments.image(at: url, note: noteID) else { continue }
-                    a = Attachments.imageAttachment(img, maxWidth: maxImageWidth)
+                    a = Attachments.imageAttachment(img, maxWidth: maxImageWidth, width: MD.imageSize(ns.substring(with: m.range(at: 1))).width)
                     open = url
                 } else {
                     open = URL(string: target)
@@ -798,6 +868,16 @@ final class MarkdownTextView: NSTextView {
                                                 width: tc.size.width - 2 * tc.lineFragmentPadding, height: 1)))
                 return
             }
+            if kind.hasPrefix("calloutHead:") { // a callout's icon before its title, and its fold chevron at the end
+                let parts = kind.split(separator: ":", omittingEmptySubsequences: false)
+                let midY = frag.minY + loc.y - style.body.capHeight / 2 + textContainerOrigin.y
+                out.append((range, "callout-icon:\(parts[1])", NSRect(x: x - 1, y: midY - 9, width: 18, height: 18)))
+                if parts.count > 2, !parts[2].isEmpty {
+                    out.append((range, "callout-fold:\(parts[2])", NSRect(x: textContainerOrigin.x + tc.size.width - tc.lineFragmentPadding - 20, y: midY - 9, width: 18, height: 18)))
+                }
+                return
+            }
+            if kind.hasPrefix("callout:") { return } // its box is drawn under the text (drawBackground)
             if kind == "quote" { // the bar down a quote's whole paragraph
                 let para = (storage.string as NSString).paragraphRange(for: range)
                 let box = lm.boundingRect(forGlyphRange: lm.glyphRange(forCharacterRange: para, actualCharacterRange: nil), in: tc)
@@ -853,6 +933,16 @@ final class MarkdownTextView: NSTextView {
                 NSBezierPath(roundedRect: m.rect, xRadius: 1.5, yRadius: 1.5).fill()
                 continue
             }
+            if m.kind.hasPrefix("callout-") {
+                let arg = String(m.kind.split(separator: ":").last ?? "")
+                let icon = m.kind.hasPrefix("callout-icon")
+                let name = icon ? Callouts.symbol(arg) : arg == "-" ? "chevron.right" : "chevron.down"
+                let color = icon ? Callouts.color(arg) : NSColor.secondaryLabelColor
+                guard let img = markerImage(name, size: style.size - (icon ? 0 : 3), colors: [color], key: "\(name)|\(style.size)|\(icon)|\(arg)|\(look)") else { continue }
+                let r = NSRect(x: m.rect.midX - img.size.width / 2, y: m.rect.midY - img.size.height / 2, width: img.size.width, height: img.size.height)
+                img.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                continue
+            }
             let done = m.kind == "done"
             let bullet = m.kind.hasPrefix("bullet")
             let level = Int(m.kind.dropFirst(6)) ?? 0
@@ -873,6 +963,21 @@ final class MarkdownTextView: NSTextView {
         super.drawBackground(in: rect)
         guard let lm = layoutManager, let tc = textContainer, let storage = textStorage, storage.length > 0 else { return }
         let chars = lm.characterRange(forGlyphRange: lm.glyphRange(forBoundingRect: rect, in: tc), actualGlyphRange: nil)
+        // Callouts: each line's band of the box, tinted in the type's color, with a bar down its side.
+        storage.enumerateAttribute(.cxMarker, in: chars) { value, range, _ in
+            guard let kind = value as? String, kind.hasPrefix("callout") else { return }
+            let type = String(kind.split(separator: ":")[1])
+            let para = (storage.string as NSString).paragraphRange(for: range)
+            let glyphs = lm.glyphRange(forCharacterRange: para, actualCharacterRange: nil)
+            var band = NSRect.null
+            lm.enumerateLineFragments(forGlyphRange: glyphs) { frag, _, _, _, _ in band = band.union(frag) }
+            band = NSRect(x: textContainerOrigin.x + tc.lineFragmentPadding, y: band.minY + textContainerOrigin.y,
+                          width: tc.size.width - 2 * tc.lineFragmentPadding, height: band.height)
+            Callouts.color(type).withAlphaComponent(0.1).setFill()
+            band.fill()
+            Callouts.color(type).withAlphaComponent(0.7).setFill()
+            NSRect(x: band.minX, y: band.minY, width: 3, height: band.height).fill()
+        }
         storage.enumerateAttribute(.cxPill, in: chars) { value, range, _ in
             guard let color = value as? NSColor, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
             let glyphs = lm.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
@@ -944,10 +1049,18 @@ final class MarkdownTextView: NSTextView {
             return
         }
         if event.modifierFlags.contains(.command), event.clickCount == 1, quickCopy(at: p, link: event.modifierFlags.contains(.option)) { return }
+        if let hit = markers().first(where: { $0.kind.hasPrefix("callout-fold:") && $0.rect.insetBy(dx: -4, dy: -4).contains(p) }),
+           let m = Styler.callout.firstMatch(in: string, range: (string as NSString).paragraphRange(for: hit.range)) {
+            replace(m.range(at: 3), with: hit.kind.hasSuffix("-") ? "+" : "-") // folds and unfolds, kept in the note
+            return
+        }
         if let hit = markers().first(where: { ($0.kind == "task" || $0.kind == "done") && $0.rect.contains(p) }) {
             // "- [ ] " → the box character is 3 UTF-16 units in
             let box = NSRange(location: hit.range.location + 3, length: 1)
+            let locked = !isEditable // a read-only note still ticks its boxes
+            isEditable = true
             replace(box, with: hit.kind == "done" ? " " : "x")
+            isEditable = !locked
             return
         }
         // In the paragraph being edited a click on a link puts the caret there, to edit it; ⌘-click, or a
@@ -964,6 +1077,37 @@ final class MarkdownTextView: NSTextView {
             return
         }
         super.mouseDown(with: event)
+    }
+
+    // MARK: The bar over a selection
+
+    private var selectionBar: NSView?
+
+    /// Bold, italic and the rest, just above what's selected once the selecting is done.
+    private func placeSelectionBar() {
+        let sel = selectedRange()
+        guard sel.length > 0, !previewing, isEditable, window != nil, UserDefaults.standard.object(forKey: Prefs.selectionBar) as? Bool ?? true,
+              let lm = layoutManager, let tc = textContainer else { selectionBar?.isHidden = true; return }
+        let bar = selectionBar ?? {
+            let v = FirstMouseHostingView(rootView: SelectionBar())
+            v.frame.size = v.fittingSize
+            addSubview(v)
+            selectionBar = v
+            return v
+        }()
+        var first = NSRect.null // the selection's first line
+        lm.enumerateEnclosingRects(forGlyphRange: lm.glyphRange(forCharacterRange: sel, actualCharacterRange: nil), withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: tc) { r, stop in
+            first = r
+            stop.pointee = true
+        }
+        guard !first.isNull else { bar.isHidden = true; return }
+        first = first.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        let size = bar.frame.size
+        var y = first.minY - size.height - 4 // above (the view is flipped)
+        if y < visibleRect.minY { y = first.maxY + 4 }
+        let x = min(max(visibleRect.minX + 4, first.minX), visibleRect.maxX - size.width - 4)
+        bar.frame.origin = NSPoint(x: x, y: y)
+        bar.isHidden = false
     }
 
     // MARK: Resting on a link previews it
@@ -1009,6 +1153,34 @@ final class MarkdownTextView: NSTextView {
         guard hoveredLink != nil else { return }
         hoveredLink = nil
         PanelController.shared?.hoverLink(nil, rect: .zero, in: self)
+    }
+
+    /// Right-click an image: its size (written into the note as Obsidian does, `![alt|400](…)`).
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        guard isEditable, let st = textStorage, st.length > 0 else { return menu }
+        let i = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
+        let at = [i, i - 1].first { $0 >= 0 && $0 < st.length && (st.attribute(.cxSource, at: $0, effectiveRange: nil) as? String)?.hasPrefix("![") == true }
+        guard let at else { return menu }
+        let size = NSMenu(title: "Image Size")
+        for (title, w) in [("Small", 200), ("Medium", 400), ("Large", 600), ("Fit the Note", 0)] {
+            let item = NSMenuItem(title: title, action: #selector(resizeImage(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = [at, w]
+            size.addItem(item)
+        }
+        let top = NSMenuItem(title: "Image Size", action: nil, keyEquivalent: "")
+        top.submenu = size
+        menu.insertItem(top, at: 0)
+        menu.insertItem(.separator(), at: 1)
+        return menu
+    }
+
+    @objc private func resizeImage(_ item: NSMenuItem) {
+        guard let v = item.representedObject as? [Int], let st = textStorage, v[0] < st.length,
+              let src = st.attribute(.cxSource, at: v[0], effectiveRange: nil) as? String else { return }
+        replace(NSRange(location: v[0], length: 1), with: MD.resized(src, width: v[1] > 0 ? v[1] : nil))
+        convertTypedAttachments()
     }
 
     private func copyToPasteboard(_ s: String) {
@@ -1210,7 +1382,27 @@ final class MarkdownTextView: NSTextView {
         if let m = Self.tagTail.firstMatch(in: before as String, range: NSRange(location: 0, length: before.length)) {
             return (.tag, NSRange(location: start + m.range(at: 1).location, length: m.range(at: 1).length))
         }
+        if !style.readOnly, let m = Self.slashTail.firstMatch(in: before as String, range: NSRange(location: 0, length: before.length)) {
+            return (.command, NSRange(location: start + m.range.location, length: m.range.length)) // the "/" too: picking one removes it
+        }
         return nil
+    }
+
+    /// `/` at a line's start or after a space, then what's typed: the command menu.
+    private static let slashTail = try! NSRegularExpression(pattern: #"(?:^|(?<=\s))/[\p{L}\p{N}]*$"#)
+    /// The `/` menu: what each command is called, and the editing action it runs.
+    static let commands: [(title: String, action: String)] = [
+        ("Heading 1", "cxHeading1:"), ("Heading 2", "cxHeading2:"), ("Heading 3", "cxHeading3:"), ("Bullet List", "cxBullet:"),
+        ("Numbered List", "cxNumbered:"), ("Checklist", "cxTask:"), ("Quote", "cxQuote:"), ("Callout", "cxCallout:"),
+        ("Code Block", "cxCodeBlock:"), ("Table", "cxTable:"), ("Divider", "cxDivider:"), ("Highlight", "cxHighlight:"),
+        ("Due Date", "cxDue:"), ("Today's Date", "cxToday:"),
+    ]
+
+    /// What the list offers for `kind` and what's typed so far.
+    private func options(_ kind: Completion, _ partial: String) -> [String] {
+        guard kind == .command else { return completionSource(kind, partial) }
+        let typed = String(partial.dropFirst()) // after the "/"
+        return Self.commands.compactMap { c in MD.fuzzy(typed, c.title).map { ("/" + c.title, $0) } }.sorted { $0.1 > $1.1 }.map(\.0)
     }
 
     /// Called after each edit: opens the suggestion list when there's something to suggest.
@@ -1218,7 +1410,7 @@ final class MarkdownTextView: NSTextView {
         guard !completing, !hasMarkedText(), window != nil, let (kind, r) = completionContext() else { return }
         let partial = (string as NSString).substring(with: r)
         if kind == .tag && partial.isEmpty { return }
-        let options = completionSource(kind, partial)
+        let options = options(kind, partial)
         guard !options.isEmpty, options != [partial] else { return }
         completing = true
         complete(nil)
@@ -1230,7 +1422,7 @@ final class MarkdownTextView: NSTextView {
     override func completions(forPartialWordRange r: NSRange, indexOfSelectedItem i: UnsafeMutablePointer<Int>) -> [String]? {
         guard let (kind, _) = completionContext() else { return super.completions(forPartialWordRange: r, indexOfSelectedItem: i) }
         i.pointee = -1 // nothing picked until ↓: typing #home then Return keeps "#home", it doesn't become #homework
-        offered = completionSource(kind, (string as NSString).substring(with: r))
+        offered = options(kind, (string as NSString).substring(with: r))
         return offered
     }
 
@@ -1238,6 +1430,15 @@ final class MarkdownTextView: NSTextView {
     override func insertCompletion(_ word: String, forPartialWordRange r: NSRange, movement: Int, isFinal: Bool) {
         var word = word
         let picked = offered.contains(word)
+        if isFinal, picked, movement != NSTextMovement.cancel.rawValue, completionContext()?.0 == .command,
+           let c = Self.commands.first(where: { "/" + $0.title == word }) {
+            // A command: the typed "/…" goes, then it runs on the line.
+            completing = false
+            super.insertCompletion("", forPartialWordRange: r, movement: NSTextMovement.cancel.rawValue, isFinal: true)
+            replace(NSRange(location: r.location, length: min(selectedRange().location, (string as NSString).length) - r.location), with: "")
+            NSApp.sendAction(Selector(c.action), to: self, from: self)
+            return
+        }
         if isFinal {
             let kind = completionContext()?.0
             completing = false
@@ -1435,6 +1636,11 @@ final class MarkdownTextView: NSTextView {
     /// ⇧⌘ formatting keys, in the panel and in note windows.
     static let shiftFormat = ["x": "cxStrike:", "7": "cxNumbered:", "8": "cxBullet:", "9": "cxQuote:", "h": "cxHighlight:"]
     @objc func cxHeading(_ sender: Any?) { transformLines(MD.cycleHeading) }
+    @objc func cxHeading1(_ sender: Any?) { transformLines { MD.heading($0, level: 1) } }
+    @objc func cxHeading2(_ sender: Any?) { transformLines { MD.heading($0, level: 2) } }
+    @objc func cxHeading3(_ sender: Any?) { transformLines { MD.heading($0, level: 3) } }
+    @objc func cxCallout(_ sender: Any?) { transformLines { $0.hasPrefix("> [!") ? $0 : "> [!note] " + ($0.hasPrefix("> ") ? String($0.dropFirst(2)) : $0) } }
+    @objc func cxToday(_ sender: Any?) { insertText(Nav.expand("{{date}}").text, replacementRange: selectedRange()) }
     @objc func cxLink(_ sender: Any?) {
         let sel = selectedRange()
         let link = NSMutableAttributedString(attributedString: plain("["))
@@ -1668,6 +1874,7 @@ final class MarkdownTextView: NSTextView {
             if hidden > 0, loc >= para.location, loc < para.location + hidden { ranges = [NSValue(range: NSRange(location: para.location + hidden, length: 0))] }
         }
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        if stillSelecting { selectionBar?.isHidden = true } else { placeSelectionBar() }
     }
 
     /// ← from the start of an item's text goes over its hidden marker to the line above.
@@ -1771,6 +1978,7 @@ struct MarkdownEditor: NSViewRepresentable {
     private func configure(_ tv: MarkdownTextView) {
         tv.style = style
         tv.isContinuousSpellCheckingEnabled = !style.code
+        tv.isEditable = !style.readOnly
         tv.resolve = { [store] in store.resolve($0) }
         tv.importFile = { [store] in store.markdown(forFile: $0) }
         tv.importImage = { [store] in store.markdown(forImage: $0) }
@@ -1888,4 +2096,40 @@ extension Due {
 extension MarkdownTextView: QLPreviewPanelDataSource {
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { lookingAt == nil ? 0 : 1 }
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! { lookingAt as NSURL? }
+}
+
+/// Obsidian's callout types: their colors and icons (aliases share them).
+enum Callouts {
+    private static let kinds: [(names: [String], color: NSColor, symbol: String)] = [
+        (["note"], .systemBlue, "pencil"), (["abstract", "summary", "tldr"], .systemTeal, "doc.text"),
+        (["info"], .systemBlue, "info.circle"), (["todo"], .systemBlue, "checkmark.circle"),
+        (["tip", "hint", "important"], .systemCyan, "flame"), (["success", "check", "done"], .systemGreen, "checkmark"),
+        (["question", "help", "faq"], .systemOrange, "questionmark.circle"), (["warning", "caution", "attention"], .systemOrange, "exclamationmark.triangle"),
+        (["failure", "fail", "missing"], .systemRed, "xmark"), (["danger", "error"], .systemRed, "bolt"),
+        (["bug"], .systemRed, "ladybug"), (["example"], .systemPurple, "list.bullet"), (["quote", "cite"], .systemGray, "quote.opening"),
+    ]
+    private static func kind(_ t: String) -> (names: [String], color: NSColor, symbol: String) { kinds.first { $0.names.contains(t.lowercased()) } ?? kinds[0] }
+    static func color(_ t: String) -> NSColor { kind(t).color }
+    static func symbol(_ t: String) -> String { kind(t).symbol }
+}
+
+/// Formatting for the selected words, floating just above them.
+struct SelectionBar: View {
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach([("bold", "cxBold:", "Bold (⌘B)"), ("italic", "cxItalic:", "Italic (⌘I)"), ("strikethrough", "cxStrike:", "Strikethrough (⇧⌘X)"),
+                     ("chevron.left.forwardslash.chevron.right", "cxCode:", "Code (⌘E)"), ("highlighter", "cxHighlight:", "Highlight (⇧⌘H)"),
+                     ("link", "cxLink:", "Link (⌘K)")], id: \.1) { symbol, action, help in
+                Button { NSApp.sendAction(Selector(action), to: nil, from: nil) } label: {
+                    Image(systemName: symbol).font(.system(size: 12, weight: .medium)).frame(width: 26, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(help)
+                .accessibilityLabel(help)
+            }
+        }
+        .padding(.horizontal, 4)
+        .glassEffect(.regular, in: .capsule)
+        .padding(2)
+    }
 }

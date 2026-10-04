@@ -92,6 +92,7 @@ struct GeneralSettings: View {
     @AppStorage(Prefs.hideFromCapture) private var hideFromCapture = false
     @AppStorage(Prefs.quickLook) private var quickLook = true
     @AppStorage(Prefs.linkPreviews) private var linkPreviews = true
+    @AppStorage(Prefs.selectionBar) private var selectionBar = true
     @Local private var atLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -139,6 +140,7 @@ struct GeneralSettings: View {
                 Toggle("Show tags on the home screen", isOn: $showTags)
                 Toggle("Load web images in every note", isOn: $webImages)
                 Toggle("Double-click an attachment to preview it (Quick Look)", isOn: $quickLook)
+                Toggle("Show formatting buttons over selected text", isOn: $selectionBar)
                 Toggle("Look up web links: a pasted link's title, a card when the pointer rests on one", isOn: $linkPreviews)
                     .help("Each lookup asks the link's site for its page")
                     .help("For ![](https://…) in notes. Off, a note's web images load only after you press Load in it: fetching one tells its server you opened the note.")
@@ -213,7 +215,7 @@ struct GeneralSettings: View {
                        Prefs.hoverPreview, Prefs.previewDelay, Prefs.previewHideDelay, Prefs.previewWidth, Prefs.undoSeconds, Prefs.showTags,
                        Prefs.codeTab, Prefs.webImages, Prefs.reminders, Prefs.remindAt, Prefs.templatesFolder, Prefs.dailyFolder,
                        Prefs.dailyTemplate, Prefs.dateFormat, Prefs.systemCalendar, Prefs.dateLanguage,
-                       Prefs.keepOpen, Prefs.panelOpacity, Prefs.hideFromCapture, Prefs.quickLook, Prefs.linkPreviews]
+                       Prefs.keepOpen, Prefs.panelOpacity, Prefs.hideFromCapture, Prefs.quickLook, Prefs.linkPreviews, Prefs.selectionBar]
 }
 
 /// A tab's "Restore Defaults": its settings back to how Cortexy comes (asks first).
@@ -551,7 +553,7 @@ struct ShortcutSettings: View {
         ("Move note to folder", "⇧⌘M"), ("Select several notes or folders", "⌘-click / ⇧-click / ⌘A"),
         ("Bold / italic / code / link", "⌘B / ⌘I / ⌘E / ⌘K"), ("Checklist / strikethrough", "⌘L / ⇧⌘X"),
         ("Indent list item", "⇥ / ⇧⇥"), ("Lines in / out in a note", "⌘] / ⌘["), ("Move lines up / down", "⌥⌘↑ / ⌥⌘↓"),
-        ("Copy a code block, heading, list item or quote", "⌘-click (a link: ⌥⌘-click)"), ("Keep the panel open", "⇧⌘P"), ("Paste as plain text", "⌥⇧⌘V"), ("Hide panel", "Esc or ⌘W"), ("Settings", "⌘,"),
+        ("Copy a code block, heading, list item or quote", "⌘-click (a link: ⌥⌘-click)"), ("Keep the panel open", "⇧⌘P"), ("Paste as plain text", "⌥⇧⌘V"), ("Commands while typing", "/ at a line's start"), ("Hide panel", "Esc or ⌘W"), ("Settings", "⌘,"),
     ]
 }
 

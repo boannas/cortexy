@@ -1750,6 +1750,49 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(h.tv.selectedRange().location == (h.tv.string as NSString).length) // the caret stays after it
 }
 
+@Test func imageSizesAndHeadingLevels() {
+    #expect(MD.imageSize("cat|300") == ("cat", 300) && MD.imageSize("|200x100") == ("", 200) && MD.imageSize("a|b") == ("a|b", nil))
+    #expect(MD.resized("![cat](attachments/c.png)", width: 400) == "![cat|400](attachments/c.png)")
+    #expect(MD.resized("![cat|400](attachments/c.png)", width: nil) == "![cat](attachments/c.png)")
+    #expect(MD.heading("## old", level: 1) == "# old" && MD.heading("text", level: 3) == "### text")
+    #expect(Styler.highlight("🟢ok").color == .systemGreen && Styler.highlight("🟢ok").emoji == 2 && Styler.highlight("plain").color == .systemYellow)
+}
+
+/// `> [!warning]- Title`: a callout box in its color; folded, its body hides until the caret goes in.
+@MainActor @Test func calloutsFoldAndColor() {
+    let h = EditorHarness(dir: tempDir())
+    h.tv.load("> [!warning]- Careful\n> hidden body\n\nafter ==🔴red==")
+    h.tv.setSelectedRange(NSRange(location: (h.tv.string as NSString).length, length: 0))
+    h.tv.restyle(force: true)
+    let st = h.tv.textStorage!
+    func font(_ i: Int) -> NSFont { st.attribute(.font, at: i, effectiveRange: nil) as! NSFont }
+    #expect(st.attribute(.cxMarker, at: 0, effectiveRange: nil) as? String == "calloutHead:warning:-")
+    let body = (h.tv.string as NSString).range(of: "hidden").location
+    #expect(font(body).pointSize < 1) // folded away
+    let red = (h.tv.string as NSString).range(of: "red").location
+    #expect((st.attribute(.backgroundColor, at: red, effectiveRange: nil) as? NSColor)?.isEqual(NSColor.systemRed.withAlphaComponent(0.35)) == true)
+    h.tv.setSelectedRange(NSRange(location: body, length: 0)) // the caret goes in: it opens
+    h.tv.restyle()
+    #expect(font(body).pointSize > 5)
+}
+
+/// Typing `/` at a line's start offers commands; picking one runs it on the line and the `/…` goes.
+@MainActor @Test func slashCommands() {
+    let h = EditorHarness(dir: tempDir())
+    h.tv.load("Title /he")
+    h.tv.setSelectedRange(NSRange(location: 9, length: 0))
+    guard let (kind, r) = h.tv.completionContext() else { Issue.record("no context"); return }
+    #expect(kind == .command && r == NSRange(location: 6, length: 3))
+    var i = 0
+    let offered = h.tv.completions(forPartialWordRange: r, indexOfSelectedItem: &i) ?? []
+    #expect(offered.first == "/Heading 1")
+    h.tv.insertCompletion("/Heading 2", forPartialWordRange: r, movement: NSTextMovement.return.rawValue, isFinal: true)
+    #expect(h.tv.markdown() == "## Title ")
+    h.tv.load("http://x.y/a")
+    h.tv.setSelectedRange(NSRange(location: 12, length: 0))
+    #expect(h.tv.completionContext() == nil) // a / inside a word or link isn't a command
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {
@@ -2332,3 +2375,4 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(heights.allSatisfy { $0 <= home + 1 }, "came home past its height: \(heights.map { Int($0) })")
     #expect(abs(c.layout.height - home) <= 1)
 }
+

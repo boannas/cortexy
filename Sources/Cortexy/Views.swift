@@ -201,6 +201,9 @@ struct Header: View {
                         }
                     }
                 }
+                if n.readOnly {
+                    ChromeButton(symbol: "pencil.slash", help: "Read only — click to edit") { nav.store.updateNote(fid, nid) { $0.readOnly = false } }
+                }
                 ChromeButton(symbol: n.pinned ? "pin.fill" : "pin", help: n.pinned ? "Unpin" : "Pin to Top") {
                     nav.store.updateNote(fid, nid) { $0.pinned.toggle() }
                 }
@@ -399,6 +402,7 @@ struct EditorView: View {
         let look = Themes.shared.look
         var style = Themes.shared.textStyle
         style.code = note.code
+        style.readOnly = note.readOnly
         return VStack(spacing: 0) {
             if note.lock != nil, nav.unlocked[nid] == nil {
                 ContentUnavailableView {
@@ -699,6 +703,7 @@ struct NoteMenu: View {
         if !Themes.shared.look.titleOnly { Button(note.folded ? "Unfold" : "Fold") { store.updateNote(fid, note.id) { $0.folded.toggle() } } }
         Toggle("Snippet (Click Copies)", isOn: Binding(get: { note.snippet }, set: { v in store.updateNote(fid, note.id) { $0.snippet = v } }))
         Toggle("Code Mode", isOn: Binding(get: { note.code }, set: { v in store.updateNote(fid, note.id) { $0.code = v } }))
+        Toggle("Read Only", isOn: Binding(get: { note.readOnly }, set: { v in store.updateNote(fid, note.id) { $0.readOnly = v } }))
         Button("Duplicate") { store.duplicateNote(fid, note.id); nav.flash("Duplicated") }
         Button(note.archived ? "Unarchive" : "Archive") { nav.archive(fid, note.id, !note.archived) }
         Menu("Move to") {

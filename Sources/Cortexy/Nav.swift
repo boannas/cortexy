@@ -586,6 +586,7 @@ import UniformTypeIdentifiers
         }
         let names: [String] = switch kind {
         case .tag: allTags.map(\.name)
+        case .command: [] // the editor's own list
         case .link: store.liveFolders.flatMap(\.notes).filter { $0.id != nid && !$0.archived }.flatMap { [$0.title] + MD.aliases($0.text) }
             .filter { $0 != "Empty Note" && seen.insert($0.lowercased()).inserted }
         }

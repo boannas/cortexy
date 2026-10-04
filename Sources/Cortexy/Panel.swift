@@ -102,6 +102,7 @@ enum Prefs {
     static let hideFromCapture = "hideFromCapture"     // screen sharing, recordings and screenshots leave Cortexy's windows out
     static let quickLook = "quickLook"                 // double-clicking an attachment previews it (else opens it in its app)
     static let linkPreviews = "linkPreviews"           // pasted links get their page's title; resting on one shows the page's card
+    static let selectionBar = "selectionBar"           // the formatting bar over selected text
 
     static var keptOpen: Bool { UserDefaults.standard.bool(forKey: keepOpen) }
     /// For every window of ours: none while hidden from capture.
@@ -112,7 +113,7 @@ enum Prefs {
         hideDelay: 0.35, previewDelay: 0.45, previewHideDelay: 0.2, previewWidth: 0.0, undoSeconds: 5.0, showTags: true,
         codeTab: 4, trashDays: 30, backupsKept: 14,
         templatesFolder: "Templates", dailyFolder: "Daily", dailyTemplate: "", dateFormat: "yyyy-MM-dd", todayKey: "", systemCalendar: false, versionsKept: 50, webImages: false, reminders: true, remindAt: 9, touchID: false, lockOnHide: true,
-        keepOpen: false, panelOpacity: 1.0, hideFromCapture: false, quickLook: true, linkPreviews: true,
+        keepOpen: false, panelOpacity: 1.0, hideFromCapture: false, quickLook: true, linkPreviews: true, selectionBar: true,
         toggleKey: HotKeySpec(keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), display: "⌃⌥N").encoded,
         newNoteKey: "",
     ]

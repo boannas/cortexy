@@ -44,6 +44,7 @@ struct Note: Codable, Identifiable, Hashable, Pinnable {
     var lock: String?        // a locked note's sealed text (NoteLock); `text` is then empty
     var lockedTitle: String? // what a locked note is called (shown, like Apple Notes)
     var byFolder = false     // sealed because its folder was locked (taking the folder's lock off opens it; a note locked alone stays)
+    var readOnly = false     // shown, not edited (its checkboxes still tick)
 
     var title: String { lock != nil ? (lockedTitle ?? "Locked Note") : MD.title(text) }
     /// Nothing in it (a locked note never counts as empty: its text is just out of sight).
@@ -68,6 +69,7 @@ struct Note: Codable, Identifiable, Hashable, Pinnable {
         lock = try c.decodeIfPresent(String.self, forKey: .lock)
         lockedTitle = try c.decodeIfPresent(String.self, forKey: .lockedTitle)
         byFolder = try c.decodeIfPresent(Bool.self, forKey: .byFolder) ?? false
+        readOnly = try c.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
     }
 }
 

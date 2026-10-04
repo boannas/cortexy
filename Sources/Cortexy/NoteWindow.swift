@@ -112,6 +112,7 @@ struct NoteWindowView: View {
     private static func style(_ n: Note) -> TextStyle {
         var st = Themes.shared.textStyle
         st.code = n.code
+        st.readOnly = n.readOnly
         return st
     }
 }

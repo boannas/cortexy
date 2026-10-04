@@ -1082,18 +1082,27 @@ struct LineView: View {
             HStack(alignment: .firstTextBaseline, spacing: 4) { Text(m).foregroundStyle(Color.cortexyAccent).monospacedDigit(); inline(s) }
                 .padding(.leading, indent)
         case .quote(let s):
-            inline(s).foregroundStyle(.secondary).padding(.leading, 8)
-                .overlay(alignment: .leading) { Capsule().fill(.tertiary).frame(width: 2) }
+            if let m = MD.match(Styler.callout, "> " + s) { // a callout's header: its icon and title in its color
+                let ns = "> " + s as NSString, type = ns.substring(with: m.range(at: 2)), rest = ns.substring(from: NSMaxRange(m.range))
+                Label { inline(rest.isEmpty ? type.capitalized : rest).bold() } icon: { Image(systemName: Callouts.symbol(type)) }
+                    .foregroundStyle(Color(nsColor: Callouts.color(type)))
+                    .padding(.leading, 8)
+                    .overlay(alignment: .leading) { Capsule().fill(Color(nsColor: Callouts.color(type))).frame(width: 2) }
+            } else {
+                inline(s).foregroundStyle(.secondary).padding(.leading, 8)
+                    .overlay(alignment: .leading) { Capsule().fill(.tertiary).frame(width: 2) }
+            }
         case .code(let s):
             Text(s).font(style.swiftUIMono(size - 1)).foregroundStyle(.secondary)
-        case .image(let alt, let path):
+        case .image(let rawAlt, let path):
             let _ = (WebImages.shared.arrivals, Attachments.loads.count) // redraw when an image is ready
             let url = store.resolve(path)
+            let (alt, width) = MD.imageSize(rawAlt)
             if let url, let img = Attachments.imageSoon(at: url, note: note) {
                 Image(nsImage: img)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxHeight: 320) // as in the editor
+                    .frame(maxWidth: width, maxHeight: width == nil ? 320 : nil) // as in the editor
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityLabel(alt.isEmpty ? "Image" : alt)
@@ -1167,8 +1176,10 @@ struct LineView: View {
             return piece
         }
         rework(Styler.mark) { a, whole, inner in
+            let (color, emoji) = Styler.highlight(String(a[inner].characters))
             var piece = AttributedString(a[inner])
-            piece.backgroundColor = Color.yellow.opacity(0.4)
+            if emoji > 0 { piece.characters.removeFirst() } // the color's emoji (one Character)
+            piece.backgroundColor = Color(nsColor: color).opacity(0.4)
             a.replaceSubrange(whole, with: piece)
         }
         rework(Styler.footnoteDef) { a, whole, label in // "[^1]: text" → a raised 1, then the text

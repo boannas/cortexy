@@ -185,6 +185,12 @@ enum MD {
         return "- [ ] " + line
     }
 
+    /// The line as a heading of `level` (whatever it was before).
+    static func heading(_ line: String, level: Int) -> String {
+        let rest = match(headingRegex, line).map { (line as NSString).substring(from: $0.range.upperBound) } ?? line
+        return String(repeating: "#", count: level) + " " + rest
+    }
+
     /// Toolbar heading button: text → # → ## → ### → text.
     static func cycleHeading(_ line: String) -> String {
         guard let m = match(headingRegex, line) else { return "# " + line }
@@ -773,6 +779,26 @@ extension MD {
         (try! NSRegularExpression(pattern: #"!\[([^\]\n]*)\]\((https?://[^)\s]+)\)"#), "<img src=\"$2\" alt=\"$1\">"),
         (Styler.link, "<a href=\"$2\">$1</a>"), (Styler.bold, "<b>$2</b>"), (Styler.italic, "<i>$1$2</i>"), (Styler.strike, "<s>$1</s>"), (Styler.mark, "<mark>$1</mark>"),
     ]
+}
+
+// MARK: Image sizes
+
+extension MD {
+    /// `![cat|300](…)` or `![|300x200](…)` (Obsidian's): the alt text, and the width asked for.
+    static func imageSize(_ alt: String) -> (alt: String, width: CGFloat?) {
+        guard let bar = alt.lastIndex(of: "|") else { return (alt, nil) }
+        let spec = alt[alt.index(after: bar)...].split(separator: "x").first.map(String.init) ?? ""
+        guard let w = Double(spec), w > 0 else { return (alt, nil) }
+        return (String(alt[..<bar]), CGFloat(w))
+    }
+
+    /// The image source with its width set (nil: back to fitting), for the editor's size menu.
+    static func resized(_ src: String, width: Int?) -> String {
+        guard let m = imageRegex.firstMatch(in: src, range: NSRange(location: 0, length: (src as NSString).length)) else { return src }
+        let ns = src as NSString
+        let alt = imageSize(unescape(ns.substring(with: m.range(at: 1)))).alt
+        return ns.replacingCharacters(in: m.range(at: 1), with: escape(alt) + (width.map { "|\($0)" } ?? ""))
+    }
 }
 
 // MARK: Search queries

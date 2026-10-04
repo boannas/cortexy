@@ -109,6 +109,16 @@ enum Welcome {
         - **⌘-click** a code block, heading, list item or quote copies it; **⌥⌘-click** copies a link
         - Double-click an attached file or image to preview it with Quick Look
 
+        ## Callouts and more
+        > [!tip] Callouts
+        > `> [!tip] Title` makes a colored box (note, info, tip, success, question, warning, danger, bug, example, quote…). Add `-` after `]` to fold it, `+` to fold it open; the chevron at its right end switches.
+
+        - `==🔴text==` highlights in red (🟠 🟢 🔵 🟣 too); plain `==text==` stays yellow
+        - Right-click an image → **Image Size**; double-click it to see it full size
+        - Type **/** at a line's start for headings, lists, a callout, a table, today's date…
+        - Select words: bold, italic, code, highlight and link buttons float above them
+        - Right-click a note → **Read Only**: it can't be edited by accident (its checkboxes still tick)
+
         ## Pasting
         - Paste a link over selected words to link them; a bare link gets its page's title
         - Text copied from a web page, Notes, Docs or Word arrives as Markdown; pasted code goes into a code block; **⌥⇧⌘V** pastes plain
@@ -304,6 +314,16 @@ enum Welcome {
         - **⌥⌘↑ / ⌥⌘↓** ย้ายบรรทัด (หรือบรรทัดที่เลือก) ขึ้นลง
         - **⌘-click** ที่ code block หัวข้อ รายการ หรือ quote เพื่อคัดลอก · **⌥⌘-click** คัดลอกลิงก์
         - ดับเบิลคลิกไฟล์แนบหรือรูปเพื่อดูด้วย Quick Look
+
+        ## Callout และอื่นๆ
+        > [!tip] Callout
+        > `> [!tip] หัวข้อ` เป็นกล่องสี (note, info, tip, success, question, warning, danger, bug, example, quote…) ใส่ `-` หลัง `]` เพื่อพับเก็บ หรือ `+` ให้พับได้แต่เปิดไว้ กดลูกศรด้านขวาเพื่อพับ/กาง
+
+        - `==🔴ข้อความ==` ไฮไลต์สีแดง (มี 🟠 🟢 🔵 🟣 ด้วย) ส่วน `==ข้อความ==` ธรรมดาเป็นสีเหลือง
+        - คลิกขวารูป → **Image Size** เปลี่ยนขนาด · ดับเบิลคลิกเพื่อดูรูปเต็ม
+        - พิมพ์ **/** ต้นบรรทัด เพื่อเลือกหัวข้อ, list, callout, ตาราง, วันที่วันนี้…
+        - เลือกข้อความ จะมีปุ่มตัวหนา ตัวเอียง โค้ด ไฮไลต์ และลิงก์ลอยขึ้นมา
+        - คลิกขวาโน้ต → **Read Only** กันแก้โดยไม่ตั้งใจ (ยังติ๊ก checkbox ได้)
 
         ## การวาง
         - วางลิงก์ทับคำที่เลือกไว้ คำนั้นจะกลายเป็นลิงก์ ถ้าวางลิงก์เปล่าๆ จะได้ชื่อหน้าเว็บมาเป็นข้อความ
