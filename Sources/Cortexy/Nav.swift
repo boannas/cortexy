@@ -721,16 +721,25 @@ import UniformTypeIdentifiers
 
     /// Files in the attachments folder, with the notes that use each. A sealed one (`.locked`) belongs to a
     /// locked note whose text can't be read: it never counts as unused.
-    struct Attachment: Identifiable { let url: URL; let notes: [(UUID, Note)]; let sealed: Bool; var id: URL { url } }
+    struct Attachment: Identifiable {
+        let url: URL, notes: [(UUID, Note)], sealed: Bool
+        var inHistory = false // only an earlier version of a note shows it
+        var unused: Bool { notes.isEmpty && !sealed && !inHistory }
+        var id: URL { url }
+    }
 
     func attachments() -> [Attachment] {
         let dir = store.directory.appendingPathComponent("attachments")
         let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
             .filter { !$0.lastPathComponent.hasPrefix(".") }
         let notes = store.folders.flatMap { f in f.notes.map { (f.id, $0) } } // Recently Deleted's too: they may come back
+        // Kept versions count too: restoring one would bring the file back into use.
+        let history = ((try? FileManager.default.contentsOfDirectory(at: store.directory.appendingPathComponent("History"), includingPropertiesForKeys: nil)) ?? [])
+            .compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined()
         return files.map { url in
             let sealed = url.pathExtension == "locked"
-            return Attachment(url: url, notes: sealed ? [] : notes.filter { $0.1.text.contains("attachments/" + url.lastPathComponent) }, sealed: sealed)
+            let users = sealed ? [] : notes.filter { $0.1.text.contains("attachments/" + url.lastPathComponent) }
+            return Attachment(url: url, notes: users, sealed: sealed, inHistory: users.isEmpty && history.contains(url.lastPathComponent))
         }.sorted { $0.url.lastPathComponent < $1.url.lastPathComponent }
     }
 
@@ -984,6 +993,12 @@ import UniformTypeIdentifiers
     /// That note, made if it isn't there: its folder, its id, and (when just made) where the caret goes.
     func periodicNote(_ period: Period, date: Date = Date()) -> (UUID, UUID, Int?)? {
         let name = Prefs.text(Prefs.dailyFolder)
+        // A locked Daily folder: no second, unlocked one beside it (what's written would be plain text).
+        if let locked = store.folders.first(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame && !store.inTrash($0.id) && store.lockedAway($0.id) }),
+           !store.moveTargets.contains(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
+            flash("“\(locked.name)” is locked")
+            return nil
+        }
         let fid = store.moveTargets.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }?.id ?? store.addFolder(name)
         let title = Nav.periodTitle(period, date)
         if let n = store.folder(fid)?.notes.first(where: { $0.title == title }) { return (fid, n.id, nil) }
@@ -1010,6 +1025,7 @@ import UniformTypeIdentifiers
             place = store.folder(Folder.rootID)?.notes.first { $0.title.localizedCaseInsensitiveCompare("Inbox") == .orderedSame }.map { (Folder.rootID, $0.id) }
                 ?? store.addNote(to: Folder.rootID, text: "# Inbox\n").map { (Folder.rootID, $0) }
         default:
+            if resolve(title: t) == nil, lockedAwayNote(titled: t) != nil { flash("“\(t)” is in a locked folder"); return false }
             place = resolve(title: t).map { ($0.0, $0.1.id) } ?? store.addNote(to: targetFolder(named: nil), text: "# \(t)\n").map { (targetFolder(named: nil), $0) }
         }
         guard let (fid, nid) = place, let n = store.note(fid, nid) else { return false }

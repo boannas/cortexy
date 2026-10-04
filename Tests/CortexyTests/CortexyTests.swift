@@ -1996,6 +1996,8 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(fm.fileExists(atPath: out.appendingPathComponent("Work/Renamed.md").path))
     #expect(!fm.fileExists(atPath: out.appendingPathComponent("attachments/p.png").path)) // no note shows it now
     #expect(try fm.attributesOfItem(atPath: out.appendingPathComponent("Welcome.md").path)[.modificationDate] as! Date == stamp) // unchanged: not rewritten
+    #expect(Store.canMirror(into: out) && Store.canMirror(into: tempDir().appendingPathComponent("new")))
+    #expect(!Store.canMirror(into: dir)) // the data folder itself has files of its own
     let left = Set(fm.subpaths(atPath: out.path)!.filter { $0.hasSuffix(".md") })
     #expect(left == ["Welcome.md", "Work/Renamed.md", "Work/Plan 2.md"] || left == ["Welcome.md", "Work/Renamed.md", "Work/Plan.md"])
 }
@@ -2020,6 +2022,54 @@ private func pngFile(in dir: URL) throws -> String {
     let projects = try #require(s.subfolders(fid).first { $0.name == "Projects" })
     #expect(s.subfolders(fid).count == 1) // "assets" holds no notes: not a folder here
     #expect(projects.notes.first?.text.hasPrefix("# Plan\n![chart](attachments/") == true)
+}
+
+/// Regressions from the review of rounds 1–8.
+@MainActor @Test func reviewRegressions() throws {
+    // The mirror never reaches outside its folder, and taking it away removes only what it wrote.
+    #expect(MD.attachmentNames("![](attachments/../../Desktop) ![](attachments/ok.png)") == ["ok.png"])
+    let base = tempDir(), out = base.appendingPathComponent("copy"), outside = base.appendingPathComponent("keep.txt")
+    try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+    try "mine".write(to: outside, atomically: true, encoding: .utf8)
+    try JSONEncoder().encode(["../keep.txt": "x", "Old.md": "y"]).write(to: out.appendingPathComponent(Store.mirrorManifest))
+    try "old".write(to: out.appendingPathComponent("Old.md"), atomically: true, encoding: .utf8)
+    Store.syncMirror(["New.md": "# New"], attachments: base, to: out)
+    #expect(FileManager.default.fileExists(atPath: outside.path) && !FileManager.default.fileExists(atPath: out.appendingPathComponent("Old.md").path))
+    try "user file".write(to: out.appendingPathComponent("theirs.txt"), atomically: true, encoding: .utf8)
+    Store.removeMirror(at: out)
+    #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("New.md").path))
+    #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("theirs.txt").path) && FileManager.default.fileExists(atPath: outside.path))
+
+    // Renaming a tag leaves code alone.
+    #expect(MD.renamedTag("#todo here\n```\n#todo: fix\n```\nand `#todo`", from: "todo", to: "task") == "#task here\n```\n#todo: fix\n```\nand `#todo`")
+
+    // A multi-word / command picked with the arrows (put in provisionally first) still runs.
+    let h = EditorHarness(dir: tempDir())
+    h.tv.load("Title /hea")
+    h.tv.setSelectedRange(NSRange(location: 10, length: 0))
+    let r = h.tv.completionContext()!.1
+    var i = 0
+    _ = h.tv.completions(forPartialWordRange: r, indexOfSelectedItem: &i)
+    h.tv.insertCompletion("/Heading 1", forPartialWordRange: r, movement: NSTextMovement.down.rawValue, isFinal: false)
+    h.tv.insertCompletion("/Heading 1", forPartialWordRange: r, movement: NSTextMovement.return.rawValue, isFinal: true)
+    #expect(h.tv.markdown() == "# Title ")
+
+    // A link pasted into a link's parentheses stays as copied.
+    let pb = NSPasteboard(name: .init("cortexy-test-\(UUID().uuidString)"))
+    defer { pb.releaseGlobally() }
+    h.tv.load("[docs](")
+    h.tv.setSelectedRange(NSRange(location: 7, length: 0))
+    pb.clearContents(); pb.setString("https://x.y/a?utm_source=z", forType: .string)
+    h.tv.paste(from: pb)
+    #expect(h.tv.markdown() == "[docs](https://x.y/a?utm_source=z")
+
+    // A locked Daily folder: nothing is written beside it in plain text.
+    Prefs.register()
+    let store = Store(testing: tempDir()), nav = Nav(store: store)
+    let daily = store.addFolder("Daily")
+    store.updateFolder(daily) { $0.locked = true }
+    #expect(!nav.append("secret", to: "today"))
+    #expect(store.folders.filter { $0.name == "Daily" }.count == 1)
 }
 
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short

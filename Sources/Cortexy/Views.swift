@@ -689,7 +689,7 @@ struct AttachmentsView: View {
     @Local private var items: [Nav.Attachment] = []
 
     var body: some View {
-        let unused = items.filter { $0.notes.isEmpty && !$0.sealed }
+        let unused = items.filter(\.unused)
         OverlayCard(title: "Attachments", detail: MD.plural(items.count, "file"), close: { nav.attachmentsShown = false }) {
             if items.isEmpty {
                 Text("No attachments yet. Images and files you add to notes are kept here.").font(.system(size: 12)).foregroundStyle(.secondary).padding(14)
@@ -716,8 +716,8 @@ struct AttachmentsView: View {
             Image(nsImage: NSWorkspace.shared.icon(forFile: a.url.path)).resizable().frame(width: 22, height: 22)
             VStack(alignment: .leading, spacing: 2) {
                 Text(a.url.lastPathComponent).font(.system(size: 12.5)).lineLimit(1).truncationMode(.middle)
-                Text(a.sealed ? "In a locked note" : a.notes.isEmpty ? "Not used by any note" : a.notes.map(\.1.title).joined(separator: ", "))
-                    .font(.system(size: 11)).foregroundStyle(a.notes.isEmpty && !a.sealed ? .orange : .secondary).lineLimit(1)
+                Text(a.sealed ? "In a locked note" : a.inHistory ? "Only in an earlier version of a note" : a.notes.isEmpty ? "Not used by any note" : a.notes.map(\.1.title).joined(separator: ", "))
+                    .font(.system(size: 11)).foregroundStyle(a.unused ? .orange : .secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
             MiniButton(symbol: "folder", help: "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([a.url]) }

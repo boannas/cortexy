@@ -847,7 +847,10 @@ extension MD {
     static func renamedTag(_ text: String, from old: String, to new: String) -> String {
         let out = NSMutableString(string: text)
         let meta = frontmatter(text)?.length ?? 0
-        for m in tagRegex.matches(in: text, range: NSRange(location: meta, length: out.length - meta)).reversed() {
+        let all = NSRange(location: 0, length: out.length)
+        let code = Styler.codeBlocks(text).map(\.whole) + Styler.code.matches(in: text, range: all).map(\.range) // `#TODO` in code isn't a tag
+        for m in tagRegex.matches(in: text, range: NSRange(location: meta, length: out.length - meta)).reversed()
+            where !code.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) {
             let raw = (text as NSString).substring(with: m.range(at: 1))
             guard tagName(raw) == old || raw.lowercased().hasPrefix(old + "/") else { continue }
             out.replaceCharacters(in: NSRange(location: m.range(at: 1).location, length: (old as NSString).length), with: new)
@@ -1108,6 +1111,7 @@ extension MD {
         guard text.contains("attachments/") else { return [] }
         let re = try! NSRegularExpression(pattern: #"\]\((?:\.\./)*attachments/([^)\s]+)\)"#)
         return re.matches(in: text, range: NSRange(location: 0, length: (text as NSString).length)).map { (text as NSString).substring(with: $0.range(at: 1)) }
+            .filter { !$0.contains("/") && !$0.contains("\\") && $0 != ".." && !$0.hasPrefix(".") } // a file in attachments/, never a path out of it
     }
 }
 

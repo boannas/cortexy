@@ -852,7 +852,17 @@ struct DataSettings: View {
             }
             Section {
                 Toggle("Keep a Markdown copy of every note", isOn: $mirror)
-                    .onChange(of: mirror) { if mirror { PanelController.shared?.store.updateMirror() } }
+                    .onChange(of: mirror) {
+                        guard let store = PanelController.shared?.store else { return }
+                        if mirror { return store.updateMirror() }
+                        // Off: the copy goes too (left there, a note locked later would stay readable in it).
+                        let a = NSAlert()
+                        a.messageText = "Turn off the Markdown copy?"
+                        a.informativeText = "Its files in “\(store.mirrorDirectory.lastPathComponent)” are removed. Your notes stay in Cortexy."
+                        a.addButton(withTitle: "Turn Off")
+                        a.addButton(withTitle: "Cancel")
+                        if a.runModal() == .alertFirstButtonReturn { Store.removeMirror(at: store.mirrorDirectory) } else { mirror = true }
+                    }
                 if mirror {
                     LabeledContent("Copy folder") {
                         HStack {
@@ -863,7 +873,18 @@ struct DataSettings: View {
                                 p.canChooseFiles = false
                                 p.canCreateDirectories = true
                                 p.prompt = "Use Folder"
-                                if p.runModal() == .OK, let url = p.url { mirrorDirectory = url.path; PanelController.shared?.store.updateMirror() }
+                                guard p.runModal() == .OK, let url = p.url else { return }
+                                // Its files would be written over: only an empty folder, or one that's a Cortexy copy already.
+                                guard Store.canMirror(into: url) else {
+                                    let a = NSAlert()
+                                    a.messageText = "Choose an empty folder"
+                                    a.informativeText = "“\(url.lastPathComponent)” has files in it. The copy rewrites its notes' files, so it needs a folder of its own."
+                                    a.runModal()
+                                    return
+                                }
+                                if let old = PanelController.shared?.store.mirrorDirectory, old.standardizedFileURL != url.standardizedFileURL { Store.removeMirror(at: old) }
+                                mirrorDirectory = url.path
+                                PanelController.shared?.store.updateMirror()
                             }
                             Button("Show") { if let d = PanelController.shared?.store.mirrorDirectory { NSWorkspace.shared.open(d) } }
                         }
@@ -874,7 +895,7 @@ struct DataSettings: View {
             } header: {
                 Text("Other Apps")
             } footer: {
-                Text("The copy is plain .md files, one per note in folders like yours, rewritten whenever a note changes: open it in Obsidian, iA Writer, an AI tool or git. Edits made there are written over. Locked notes are never copied or put in Spotlight.")
+                Text("The copy is plain .md files, one per note in folders like yours, rewritten whenever a note changes: open it in Obsidian, iA Writer, an AI tool or git. Edits made there are written over. Locked notes are never copied or put in Spotlight; turning the copy off or moving it removes the old one.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {

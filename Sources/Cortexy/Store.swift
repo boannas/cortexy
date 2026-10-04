@@ -835,11 +835,11 @@ extension JSONEncoder {
 
 /// A web page's title, description and picture, for a pasted link's text and the card shown when the pointer
 /// rests on a link. Asking tells the site about it, so it's done only while Settings allows it.
-@Observable final class LinkPreviews {
+@MainActor @Observable final class LinkPreviews {
     static let shared = LinkPreviews()
     struct Info: Codable, Equatable { var title = "", summary = "", image: URL? }
 
-    static var enabled: Bool { UserDefaults.standard.object(forKey: Prefs.linkPreviews) as? Bool ?? true }
+    nonisolated static var enabled: Bool { UserDefaults.standard.object(forKey: Prefs.linkPreviews) as? Bool ?? true }
     /// How a page is fetched (tests answer without the network).
     @ObservationIgnored var load: (URL) async throws -> (Data, URLResponse) = { url in
         var r = URLRequest(url: url, timeoutInterval: 12)
@@ -869,7 +869,7 @@ extension JSONEncoder {
     }
 
     /// `<title>`, then `og:` / `twitter:` tags, from a page's HTML.
-    static func parse(_ html: String, base: URL) -> Info {
+    nonisolated static func parse(_ html: String, base: URL) -> Info {
         let ns = html as NSString, all = NSRange(location: 0, length: ns.length)
         func meta(_ names: [String]) -> String? {
             for n in names {
@@ -892,7 +892,7 @@ extension JSONEncoder {
     }
 
     /// `&amp;`, `&#39;`, `&#x2014;` and friends.
-    static func decode(_ s: String) -> String {
+    nonisolated static func decode(_ s: String) -> String {
         guard s.contains("&") else { return s }
         var out = s
         for (k, v) in ["&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&apos;": "'", "&nbsp;": " "] { out = out.replacingOccurrences(of: k, with: v) }
@@ -995,6 +995,13 @@ extension Store {
 
     static let mirrorManifest = ".cortexy-mirror.json"
 
+    /// A folder the copy may write into: empty (hidden files aside), missing, or a Cortexy copy already.
+    static func canMirror(into dir: URL) -> Bool {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(atPath: dir.path) else { return true }
+        return items.allSatisfy { $0.hasPrefix(".") } || items.contains(mirrorManifest)
+    }
+
     /// Brings `dir` in line with `plan`: writes what changed, deletes files of notes gone (and folders left
     /// empty), copies the attachments the notes use. A manifest remembers what it wrote, so nothing else there is
     /// touched. Edits made in the mirror are written over: it's a copy, not a second place to write.
@@ -1003,6 +1010,7 @@ extension Store {
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let manifestURL = dir.appendingPathComponent(mirrorManifest)
         let old = (try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: manifestURL))) ?? [:]
+        if !fm.fileExists(atPath: manifestURL.path) { try? Data("{}".utf8).write(to: manifestURL) } // claimed before anything is written
         func hash(_ s: String) -> String { SHA256.hash(data: Data(s.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined() }
         var now: [String: String] = [:]
         for (path, text) in plan {
@@ -1024,8 +1032,10 @@ extension Store {
                 try? fm.copyItem(at: attachments.appendingPathComponent(name), to: dest)
             }
         }
+        let inside = dir.standardizedFileURL.path + "/"
         for path in old.keys where now[path] == nil {
             let file = dir.appendingPathComponent(path)
+            guard file.standardizedFileURL.path.hasPrefix(inside) else { continue } // never anything outside the copy
             try? fm.removeItem(at: file)
             var parent = file.deletingLastPathComponent() // folders it leaves empty
             while parent.path.count > dir.path.count, (try? fm.contentsOfDirectory(atPath: parent.path))?.isEmpty == true {
@@ -1041,6 +1051,28 @@ extension Store {
         }
     }
 
+    /// Takes a copy away (turned off, or moved elsewhere): the files it wrote, its manifest and note, and the
+    /// folders that leaves empty. Nothing else in the folder is touched. A copy left behind would keep notes
+    /// locked later in plain text.
+    static func removeMirror(at dir: URL) {
+        let fm = FileManager.default, manifestURL = dir.appendingPathComponent(mirrorManifest)
+        guard let old = try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: manifestURL)) else { return }
+        let inside = dir.standardizedFileURL.path + "/"
+        for path in old.keys {
+            let file = dir.appendingPathComponent(path)
+            guard file.standardizedFileURL.path.hasPrefix(inside) else { continue }
+            try? fm.removeItem(at: file)
+            var parent = file.deletingLastPathComponent()
+            while parent.path.count > dir.path.count, (try? fm.contentsOfDirectory(atPath: parent.path))?.isEmpty == true {
+                try? fm.removeItem(at: parent)
+                parent = parent.deletingLastPathComponent()
+            }
+        }
+        try? fm.removeItem(at: manifestURL)
+        try? fm.removeItem(at: dir.appendingPathComponent("About this folder (Cortexy).txt"))
+        if (try? fm.contentsOfDirectory(atPath: dir.path))?.isEmpty == true { try? fm.removeItem(at: dir) }
+    }
+
     /// Where the mirror goes: the folder chosen in Settings, else "Markdown" in the data folder.
     var mirrorDirectory: URL {
         let chosen = Prefs.text(Prefs.mirrorDirectory)
@@ -1051,7 +1083,7 @@ extension Store {
 
     /// After a save, when the mirror is on: planned here (it reads the notes), written in the background.
     func updateMirror() {
-        guard UserDefaults.standard.bool(forKey: Prefs.mirror) else { return }
+        guard UserDefaults.standard.bool(forKey: Prefs.mirror), Store.canMirror(into: mirrorDirectory) || Prefs.text(Prefs.mirrorDirectory).isEmpty else { return }
         let plan = mirrorPlan(), attachments = attachmentsDirectory, dir = mirrorDirectory
         Store.mirrorQueue.async { Store.syncMirror(plan, attachments: attachments, to: dir) }
     }
@@ -1135,7 +1167,7 @@ extension Store {
             guard let file = local(ref) else { continue }
             let size = m.range(at: 2).location == NSNotFound ? "" : "|" + ns.substring(with: m.range(at: 2))
             var md = replacement(file, alt: file.deletingPathExtension().lastPathComponent, image: true)
-            if !size.isEmpty, md.hasPrefix("!["), let close = md.firstIndex(of: "]") { md.insert(contentsOf: size, at: close) }
+            if !size.isEmpty, md.hasPrefix("!["), let close = md.range(of: "](") { md.insert(contentsOf: size, at: close.lowerBound) }
             out = ns.replacingCharacters(in: m.range, with: md)
         }
         // ![alt](relative/path) and [name](relative/path.pdf)
@@ -1182,8 +1214,9 @@ enum SpotlightIndex {
     static func sync(_ store: Store) {
         guard Bundle.main.bundleURL.pathExtension == "app" else { return } // not from `swift test` / `swift run`
         let index = CSSearchableIndex.default()
-        guard enabled else {
-            if !sent.isEmpty { index.deleteSearchableItems(withDomainIdentifiers: [domain]); sent = [:] }
+        guard enabled else { // off: everything out, whatever an earlier run put in
+            index.deleteSearchableItems(withDomainIdentifiers: [domain])
+            sent = [:]
             return
         }
         let notes = store.spotlightNotes()
@@ -1202,6 +1235,13 @@ enum SpotlightIndex {
         if !gone.isEmpty { index.deleteSearchableItems(withIdentifiers: gone.map(\.uuidString)) }
         for (_, n) in changed { sent[n.id] = n.modified }
         for g in gone { sent[g] = nil }
+    }
+
+    /// At launch: what earlier runs indexed is cleared (it may hold notes locked or deleted since, here or on
+    /// another Mac), then everything that may be shown goes in again.
+    static func start(_ store: Store) {
+        reset()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak store] in if let store { sync(store) } }
     }
 
     /// Everything out (a lock, a moved library): the next pass sends what may be shown.

@@ -1351,7 +1351,9 @@ final class MarkdownTextView: NSTextView {
         pb.setString(md, forType: markdownType)
         let html = MD.html(md)
         pb.setString(html, forType: .html)
-        if let rich = try? NSAttributedString(data: Data(html.utf8), options: [.documentType: NSAttributedString.DocumentType.html,
+        // RTF through WebKit's importer, which would fetch web images (and wait for them): their alt text instead.
+        let local = html.replacingOccurrences(of: #"<img[^>]*alt="([^"]*)"[^>]*>"#, with: "$1", options: .regularExpression)
+        if let rich = try? NSAttributedString(data: Data(local.utf8), options: [.documentType: NSAttributedString.DocumentType.html,
                                                                                .characterEncoding: String.Encoding.utf8.rawValue], documentAttributes: nil),
            let rtf = rich.rtf(from: NSRange(location: 0, length: rich.length)) {
             pb.setData(rtf, forType: .rtf)
@@ -1377,7 +1379,7 @@ final class MarkdownTextView: NSTextView {
         let sel = selectedRange(), ns = string as NSString
         let lineStart = ns.paragraphRange(for: NSRange(location: min(sel.location, ns.length), length: 0)).location
         guard !style.code, Styler.fences(string, before: lineStart) % 2 == 0, let text = pb.string(forType: .string) else { return plainPaste(pb) }
-        if let url = MD.singleURL(text) { return pasteLink(url) }
+        if let url = MD.singleURL(text), plainProse(at: sel.location) { return pasteLink(url) }
         if pb.availableType(from: [Self.markdownType]) == nil, let html = pb.string(forType: .html), let md = MD.markdown(fromHTML: html), !md.isEmpty {
             return insertText(md, replacementRange: sel)
         }
@@ -1388,6 +1390,17 @@ final class MarkdownTextView: NSTextView {
     private func plainPaste(_ pb: NSPasteboard) {
         guard let text = pb.string(forType: .string) else { return super.paste(nil) }
         insertText(text, replacementRange: selectedRange())
+    }
+
+    /// Where a pasted link may become `[Title](link)`: not inside a link's `(…)` or `<…>`, inline code or the
+    /// frontmatter (it'd break them); there it goes in as copied.
+    private func plainProse(at loc: Int) -> Bool {
+        let ns = string as NSString
+        guard loc >= MD.frontmatter(string)?.length ?? 0 else { return false }
+        let start = ns.paragraphRange(for: NSRange(location: min(loc, ns.length), length: 0)).location
+        let before = ns.substring(with: NSRange(location: start, length: loc - start))
+        if before.filter({ $0 == "`" }).count % 2 == 1 { return false }
+        return !(before.hasSuffix("(") || before.hasSuffix("<") || before.hasSuffix("[") || before.hasSuffix("=") || before.hasSuffix("\""))
     }
 
     private func pasteLink(_ url: URL) {
@@ -1480,6 +1493,8 @@ final class MarkdownTextView: NSTextView {
 
     /// `/` at a line's start or after a space, then what's typed: the command menu.
     private static let slashTail = try! NSRegularExpression(pattern: #"(?:^|(?<=\s))/[\p{L}\p{N}]*$"#)
+    /// What the completion list on show was made for.
+    private var offeredKind: Completion?
     /// The `/` menu: what each command is called, and the editing action it runs.
     static let commands: [(title: String, action: String)] = [
         ("Heading 1", "cxHeading1:"), ("Heading 2", "cxHeading2:"), ("Heading 3", "cxHeading3:"), ("Bullet List", "cxBullet:"),
@@ -1514,6 +1529,7 @@ final class MarkdownTextView: NSTextView {
         guard let (kind, _) = completionContext() else { return super.completions(forPartialWordRange: r, indexOfSelectedItem: i) }
         i.pointee = -1 // nothing picked until ↓: typing #home then Return keeps "#home", it doesn't become #homework
         offered = options(kind, (string as NSString).substring(with: r))
+        offeredKind = kind
         return offered
     }
 
@@ -1521,12 +1537,16 @@ final class MarkdownTextView: NSTextView {
     override func insertCompletion(_ word: String, forPartialWordRange r: NSRange, movement: Int, isFinal: Bool) {
         var word = word
         let picked = offered.contains(word)
-        if isFinal, picked, movement != NSTextMovement.cancel.rawValue, completionContext()?.0 == .command,
+        // Decided on what was offered, not on the text: arrowing to "/Heading 1" puts it in provisionally, and its
+        // space no longer reads as a command being typed.
+        if isFinal, picked, movement != NSTextMovement.cancel.rawValue, offeredKind == .command,
            let c = Self.commands.first(where: { "/" + $0.title == word }) {
-            // A command: the typed "/…" goes, then it runs on the line.
+            // A command: the completion ends as usual (the command's name in place of what was typed), then that
+            // name goes and the command runs on the line.
             completing = false
-            super.insertCompletion("", forPartialWordRange: r, movement: NSTextMovement.cancel.rawValue, isFinal: true)
-            replace(NSRange(location: r.location, length: min(selectedRange().location, (string as NSString).length) - r.location), with: "")
+            super.insertCompletion(word, forPartialWordRange: r, movement: movement, isFinal: true)
+            let typed = NSRange(location: r.location, length: (word as NSString).length)
+            if NSMaxRange(typed) <= (string as NSString).length, (string as NSString).substring(with: typed) == word { replace(typed, with: "") }
             NSApp.sendAction(Selector(c.action), to: self, from: self)
             return
         }

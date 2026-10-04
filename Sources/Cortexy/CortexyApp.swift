@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if Snapshot.runIfRequested(c) { return }
         #endif
         NoteWindows.shared.restore(nav: c.nav)
+        SpotlightIndex.start(store)
         // Launch activation settles after this returns and would steal key focus (closing the panel), so wait a beat.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [self] in
             if store.isFirstRun || store.recovering || !queuedURLs.isEmpty { c.show(byHover: false) }
