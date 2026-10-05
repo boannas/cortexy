@@ -612,7 +612,7 @@ import UniformTypeIdentifiers
             let n: Note? = name.isEmpty ? nid.flatMap { id in store.folderOf(id).flatMap { store.note($0.id, id) } } : resolve(title: name)?.1
             guard let n, !rest.hasPrefix("^") else { return [] }
             let heads = MD.headings(unlocked[n.id] ?? n.text).map(\.title).filter { seen.insert($0.lowercased()).inserted }
-            return heads.compactMap { h in MD.fuzzy(rest, h).map { (name + "#" + h, $0) } }.sorted { $0.1 > $1.1 }.prefix(12).map(\.0)
+            return heads.compactMap { h in MD.fuzzy(rest, h).map { (name + "#" + h, $0) } }.sorted { $0.1 > $1.1 }.prefix(30).map(\.0)
         }
         let names: [String] = switch kind {
         case .tag: allTags.map(\.name)
@@ -620,7 +620,7 @@ import UniformTypeIdentifiers
         case .link: store.liveFolders.flatMap(\.notes).filter { $0.id != nid && !$0.archived }.flatMap { [$0.title] + MD.aliases($0.text) }
             .filter { $0 != "Empty Note" && seen.insert($0.lowercased()).inserted }
         }
-        return names.compactMap { n in MD.fuzzy(partial, n).map { (n, $0) } }.sorted { $0.1 > $1.1 }.prefix(12).map(\.0)
+        return names.compactMap { n in MD.fuzzy(partial, n).map { (n, $0) } }.sorted { $0.1 > $1.1 }.prefix(30).map(\.0)
     }
 
     /// The note a `[[title]]` means: one in the open folder first, else the newest with that title.

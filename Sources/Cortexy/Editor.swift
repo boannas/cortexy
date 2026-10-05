@@ -1484,10 +1484,12 @@ final class MarkdownTextView: NSTextView {
         let start = ns.paragraphRange(for: NSRange(location: sel.location, length: 0)).location
         guard Styler.fences(string, before: start) % 2 == 0 else { return nil } // inside a code block
         let before = ns.substring(with: NSRange(location: start, length: sel.location - start)) as NSString
-        let open = before.range(of: "[[", options: .backwards)
+        var open = before.range(of: "[[", options: .backwards)
+        // "[[[WH+] T": the link opens at the run's first two brackets; the third is the title's own.
+        while open.location != NSNotFound, open.location > 0, before.character(at: open.location - 1) == 91 { open.location -= 1 }
         if open.location != NSNotFound {
             let typed = before.substring(from: NSMaxRange(open))
-            if !typed.contains("]") && !typed.contains("|") {
+            if !typed.contains("]]") && !typed.contains("|") {
                 return (.link, NSRange(location: start + NSMaxRange(open), length: before.length - NSMaxRange(open)))
             }
         }
@@ -1530,6 +1532,7 @@ final class MarkdownTextView: NSTextView {
     private var suggestionKind: Completion?
     private var suggestionRange = NSRange(location: NSNotFound, length: 0)
     private(set) var highlighted: Int?
+    private var askedForRoom = false // the panel was asked to grow for the list
     var suggestionRangeStart: Int { suggestionRange.location }
 
     /// After each edit: shows the list when what's being typed has suggestions, and hides it when not.
@@ -1539,7 +1542,7 @@ final class MarkdownTextView: NSTextView {
         let options = (kind == .tag && partial.isEmpty) ? [] : options(kind, partial)
         guard !options.isEmpty, options != [partial] else { return hideSuggestions() }
         if options != suggestions || kind != suggestionKind { highlighted = nil }
-        suggestions = Array(options.prefix(12))
+        suggestions = Array(options.prefix(30))
         suggestionKind = kind
         suggestionRange = r
         completing = true
@@ -1548,6 +1551,7 @@ final class MarkdownTextView: NSTextView {
 
     func hideSuggestions() {
         guard completing || suggestionBox?.isHidden == false else { return }
+        if askedForRoom { askedForRoom = false; PanelController.shared?.needs(atLeast: 0) }
         completing = false
         suggestions = []
         highlighted = nil
@@ -1555,17 +1559,13 @@ final class MarkdownTextView: NSTextView {
     }
 
     private func showSuggestions() {
-        let list = SuggestionList(items: suggestions, highlighted: highlighted, kind: suggestionKind ?? .link) { [weak self] in self?.pickSuggestion($0) }
-        let box = suggestionBox ?? {
-            let v = FirstMouseHostingView(rootView: list)
-            addSubview(v)
-            suggestionBox = v
-            return v
-        }()
-        box.rootView = list
-        box.frame.size = box.fittingSize
-        // Under the caret's line; above it when there's no room below.
         guard let lm = layoutManager, let tc = textContainer else { return }
+        // In the panel, room to show it: the panel grows while the list is up (a short note makes a short panel).
+        if let c = PanelController.shared, window === c.panel, !askedForRoom {
+            askedForRoom = true
+            c.needs(atLeast: 440)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in if self?.completing == true { self?.showSuggestions() } } // placed again once it's grown
+        }
         let caret = min(selectedRange().location, (string as NSString).length)
         var at = NSRect(x: 0, y: 0, width: 0, height: style.lineHeight) // the caret, in the text container
         if lm.numberOfGlyphs > 0 {
@@ -1573,9 +1573,20 @@ final class MarkdownTextView: NSTextView {
             at = NSRect(x: caret > 0 ? r.maxX : r.minX, y: r.minY, width: 0, height: r.height)
         }
         at = at.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        // Below the caret's line, or above it when there's more room there; as tall as fits (it scrolls).
+        let below = visibleRect.maxY - at.maxY - 6, above = at.minY - visibleRect.minY - 6
+        let room = max(below, above, 90)
+        let list = SuggestionList(items: suggestions, highlighted: highlighted, kind: suggestionKind ?? .link, maxHeight: room) { [weak self] in self?.pickSuggestion($0) }
+        let box = suggestionBox ?? {
+            let v = FirstMouseHostingView(rootView: list)
+            addSubview(v)
+            suggestionBox = v
+            return v
+        }()
+        box.rootView = list
+        box.frame.size = NSSize(width: SuggestionList.width, height: list.height)
         let size = box.frame.size
-        var y = at.maxY + 2
-        if y + size.height > visibleRect.maxY, at.minY - size.height - 2 > visibleRect.minY { y = at.minY - size.height - 2 }
+        let y = below >= size.height || below >= above ? at.maxY + 2 : at.minY - size.height - 2
         box.frame.origin = NSPoint(x: min(max(visibleRect.minX + 4, at.minX - 12), visibleRect.maxX - size.width - 4), y: y)
         box.isHidden = false
     }
@@ -2312,37 +2323,51 @@ extension MarkdownTextView {
     }
 }
 
-/// The suggestions under the caret: note titles after `[[`, tags after `#`, commands after `/`.
+/// The suggestions under the caret: note titles after `[[`, tags after `#`, commands after `/`. It scrolls when
+/// they don't fit, keeping the row picked with the arrows in view.
 struct SuggestionList: View {
     let items: [String]
     let highlighted: Int?
     let kind: MarkdownTextView.Completion
+    let maxHeight: CGFloat
     let pick: (String) -> Void
 
+    static let width: CGFloat = 260, row: CGFloat = 25
+    private var hint: Bool { highlighted == nil }
+    /// Its height: every row if they fit, else what the room allows.
+    var height: CGFloat { min(CGFloat(items.count) * Self.row + (hint ? 18 : 0) + 8, maxHeight) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            ForEach(Array(items.enumerated()), id: \.offset) { i, item in
-                Button { pick(item) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: kind == .link ? "doc.text" : kind == .tag ? "number" : "command").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 14)
-                        Text(kind == .tag ? "#" + item : item).font(.system(size: 13)).lineLimit(1)
-                        Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(Array(items.enumerated()), id: \.offset) { i, item in
+                        Button { pick(item) } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: kind == .link ? "doc.text" : kind == .tag ? "number" : "command").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 14)
+                                Text(kind == .tag ? "#" + item : item).font(.system(size: 13)).lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 8)
+                            .frame(height: Self.row - 1)
+                            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(i == highlighted ? Color.cortexyAccent.opacity(0.25) : .clear))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .id(i)
                     }
-                    .padding(.horizontal, 8)
-                    .frame(height: 24)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(i == highlighted ? Color.cortexyAccent.opacity(0.25) : .clear))
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .scrollTargetLayout()
             }
-            if highlighted == nil {
-                Text("↓ to choose · ⇥ takes the first").font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.top, 2)
+            // The row picked with the arrows stays in view (set as the list is drawn, not by a later scroll).
+            .scrollPosition(id: Binding(get: { highlighted }, set: { _ in }), anchor: .center)
+            if hint {
+                Text("↓ to choose · ⇥ takes the first · \(items.count) found").font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 8).frame(height: 18)
             }
         }
         .padding(4)
-        .frame(width: 250, alignment: .leading)
+        .frame(width: Self.width, height: height, alignment: .topLeading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.primary.opacity(0.1)))
-        .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
     }
 }

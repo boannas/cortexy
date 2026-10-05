@@ -2107,6 +2107,37 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(nav.route == .note(Folder.rootID, target))
 }
 
+/// Titles with brackets ("[WH+] Tasks") link like any other; a `[[` still being typed doesn't swallow a link
+/// further along the line. The suggestion list scrolls when its rows don't fit.
+@MainActor @Test func bracketedTitlesLink() {
+    #expect(MD.wikiLinks("see [[[WH+] Tasks]] and [[Plan]]") == ["[WH+] Tasks", "Plan"])
+    #expect(MD.wikiLinks("[[Notes [v2]]] [[a|b [c]]]") == ["Notes [v2]", "a"])
+    #expect(MD.wikiLinks("typing [[ still, then [[Plan]]") == ["Plan"])
+    #expect(MD.title("[[[WH+] Tasks]] today") == "[WH+] Tasks today")
+    #expect(MD.relinked("[[[WH+] Tasks]]", from: "[WH+] Tasks", to: "[WH+] To Do") == "[[[WH+] To Do]]")
+    let s = Store(testing: tempDir()), nav = Nav(store: s)
+    let tasks = s.addNote(to: Folder.rootID, text: "# [WH+] Tasks\nlist")!
+    let from = s.addNote(to: Folder.rootID, text: "# Today\nsee [[[WH+] Tasks]]")!
+    #expect(nav.backlinks(to: ["[WH+] Tasks"], excluding: tasks).map(\.1.id) == [from])
+    nav.openLink(Link.note("[WH+] Tasks"), from: from)
+    #expect(nav.route == .note(Folder.rootID, tasks))
+
+    let h = EditorHarness(dir: tempDir())
+    h.tv.load("see [[[WH")
+    h.tv.setSelectedRange(NSRange(location: 9, length: 0))
+    #expect(h.tv.completionContext()?.0 == .link && h.tv.completionContext()?.1 == NSRange(location: 6, length: 3)) // typed: "[WH"
+    h.tv.load("see [[[WH+] Tasks]] end")
+    h.tv.setSelectedRange(NSRange(location: 0, length: 0))
+    h.tv.restyle(force: true)
+    let at = (h.tv.string as NSString).range(of: "Tasks").location
+    #expect(h.tv.textStorage!.attribute(.link, at: at, effectiveRange: nil) as? URL == Link.note("[WH+] Tasks"))
+
+    let many = (1...40).map { "Note \($0)" }
+    let list = SuggestionList(items: many, highlighted: nil, kind: .link, maxHeight: 200) { _ in }
+    #expect(list.height == 200)
+    #expect(SuggestionList(items: ["a", "b"], highlighted: 0, kind: .link, maxHeight: 200) { _ in }.height == 2 * SuggestionList.row + 8)
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {
@@ -2689,6 +2720,7 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(heights.allSatisfy { $0 <= home + 1 }, "came home past its height: \(heights.map { Int($0) })")
     #expect(abs(c.layout.height - home) <= 1)
 }
+
 
 
 

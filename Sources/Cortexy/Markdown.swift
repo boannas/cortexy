@@ -133,8 +133,8 @@ enum MD {
         return out
     }
     private static let plainPasses: [(NSRegularExpression, String)] = [
-        (Styler.code, "$1"), (try! NSRegularExpression(pattern: #"\[\[[^\]|\n]+\|([^\]\n]+)\]\]"#), "$1"),
-        (try! NSRegularExpression(pattern: #"\[\[([^\]\n]+)\]\]"#), "$1"), (Styler.link, "$1"),
+        (Styler.code, "$1"), (try! NSRegularExpression(pattern: MD.wikiAlias), "$1"),
+        (try! NSRegularExpression(pattern: MD.wikiPlain), "$1"), (Styler.link, "$1"),
         (Styler.bold, "$2"), (Styler.italic, "$1$2"), (Styler.strike, "$1"), (Styler.mark, "$1"),
     ]
 
@@ -270,7 +270,12 @@ extension MD {
     static let tagStart = #"(?:^|(?<=[\s(“‘"'\p{Thai}]))#"#
     static let tagRegex = try! NSRegularExpression(pattern: tagStart + #"([\p{L}\p{M}\p{N}_/-]+)"#, options: .anchorsMatchLines)
     /// `[[Title]]` or `[[Title|shown text]]`.
-    static let wikiRegex = try! NSRegularExpression(pattern: #"\[\[([^\[\]|\n]+)(?:\|([^\[\]\n]+))?\]\]"#)
+    /// The title may hold brackets ("[WH+] Tasks" → `[[[WH+] Tasks]]`): it runs to the first `]]` that isn't
+    /// followed by another `]` (so a title ending in "]" keeps it).
+    /// Never a `[[` inside, though: a `[[` still being typed must not swallow a link further along the line.
+    static let wikiRegex = try! NSRegularExpression(pattern: #"\[\[((?:(?!\[\[)[^\n|])+?)(?:\|((?:(?!\[\[)[^\n])+?))?\]\](?!\])"#)
+    static let wikiAlias = #"\[\[(?:(?!\[\[)[^\n|])+?\|((?:(?!\[\[)[^\n])+?)\]\](?!\])"#
+    static let wikiPlain = #"\[\[((?:(?!\[\[)[^\n|])+?)\]\](?!\])"#
     static let codeSpanRegex = try! NSRegularExpression(pattern: #"`[^`\n]+`"#)
 
     /// The tag a `#…` match names, or nil when it's a number or a 6-digit hex color (`#decade` stays a color).
@@ -790,7 +795,7 @@ extension MD {
         }.joined()
     }
     private static let inlinePasses: [(NSRegularExpression, String)] = [
-        (try! NSRegularExpression(pattern: #"\[\[[^\]|\n]+\|([^\]\n]+)\]\]"#), "$1"), (try! NSRegularExpression(pattern: #"\[\[([^\]\n]+)\]\]"#), "$1"),
+        (try! NSRegularExpression(pattern: MD.wikiAlias), "$1"), (try! NSRegularExpression(pattern: MD.wikiPlain), "$1"),
         (try! NSRegularExpression(pattern: #"!\[([^\]\n]*)\]\((https?://[^)\s]+)\)"#), "<img src=\"$2\" alt=\"$1\">"),
         (Styler.link, "<a href=\"$2\">$1</a>"), (Styler.bold, "<b>$2</b>"), (Styler.italic, "<i>$1$2</i>"), (Styler.strike, "<s>$1</s>"), (Styler.mark, "<mark>$1</mark>"),
     ]
