@@ -153,6 +153,7 @@ struct Folder: Codable, Identifiable, Hashable, Pinnable {
     @ObservationIgnored private var loading = false
     @ObservationIgnored private(set) var edits = 0 // bumps on every change; caches compare against it
     @ObservationIgnored var onSaved: (() -> Void)?
+    @ObservationIgnored var onMirrorPulled: ((Int) -> Void)? // notes changed by edits made in the Markdown copy
     @ObservationIgnored var onMerged: (() -> Void)? // another Mac's edits were combined with ours
     @ObservationIgnored private var savedEdits = 0
     @ObservationIgnored private var maintainedDay = ""

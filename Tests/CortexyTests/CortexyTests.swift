@@ -2334,6 +2334,58 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(st.attribute(.attachment, at: 0, effectiveRange: nil) == nil) // itself: left as typed
 }
 
+/// Two-way mirror: an edit in the copy updates its note; edited on both sides, both versions are kept; a new
+/// file becomes a note; a deleted file's note goes to Recently Deleted (not an iCloud placeholder's); a file
+/// brought in under another name is written under its note's and the original goes.
+@MainActor @Test func twoWayMirror() throws {
+    let dir = tempDir(), out = tempDir()
+    let s = Store(testing: dir)
+    let work = s.addFolder("Work")
+    let plan = s.addNote(to: work, text: "# Plan\nfirst")!
+    let both = s.addNote(to: work, text: "# Both\nv1")!
+    let gone = s.addNote(to: work, text: "# Gone\nbye")!
+    let kept = s.addNote(to: work, text: "# Kept\nstill")!
+    func push(drop: [String] = []) { let f = s.mirrorFiles(); Store.syncMirror(f.mapValues(\.text), ids: f.mapValues(\.id), drop: drop, attachments: s.attachmentsDirectory, to: out) }
+    push()
+    #expect(Store.readManifest(out)["Work/Plan.md"]?.id == plan)
+    let fm = FileManager.default
+    func write(_ path: String, _ text: String) throws {
+        let u = out.appendingPathComponent(path)
+        try fm.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: u, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: u.path) // later than written
+    }
+    try write("Work/Plan.md", "# Plan\nedited in Obsidian")
+    try write("Work/Both.md", "# Both\nfrom Obsidian")
+    s.updateNote(work, both) { $0.text = "# Both\nfrom Cortexy" }
+    try write("Work/Sub/New idea.md", "an idea without a heading")
+    try write("Work/x:y.md", "# Odd name")
+    try fm.removeItem(at: out.appendingPathComponent("Work/Gone.md"))
+    try fm.removeItem(at: out.appendingPathComponent("Work/Kept.md"))
+    try Data().write(to: out.appendingPathComponent("Work/.Kept.md.icloud")) // only moved off this Mac by iCloud
+
+    let changes = Store.scanMirror(out)
+    #expect(changes.changed.count == 2 && changes.added.count == 2 && changes.removed == [gone])
+    let (count, adopted) = s.applyMirror(changes, from: out)
+    #expect(count == 5)
+    #expect(s.note(work, plan)?.text == "# Plan\nedited in Obsidian")
+    #expect(s.note(work, both)?.text == "# Both\nfrom Cortexy")                                  // ours stays…
+    #expect(s.folder(work)!.notes.contains { $0.text == "# Both (edited in the Markdown copy)\n# Both\nfrom Obsidian" }) // …and theirs comes in
+    let sub = try #require(s.subfolders(work).first { $0.name == "Sub" })
+    #expect(sub.notes.first?.text == "# New idea\nan idea without a heading")
+    #expect(s.inTrash(s.folderOf(gone)!.id) && s.folderOf(kept)?.id == work)
+
+    let files = s.mirrorFiles(), byID = Dictionary(files.map { ($0.value.id, $0.key) }) { a, _ in a }
+    push(drop: adopted.compactMap { id, path in byID[id] == path ? nil : path })
+    #expect(!fm.fileExists(atPath: out.appendingPathComponent("Work/x:y.md").path))   // now written as its note's name…
+    #expect(fm.fileExists(atPath: out.appendingPathComponent("Work/x-y.md").path))    // …here
+    #expect(Store.scanMirror(out).isEmpty)                                            // and nothing comes back twice
+
+    // A manifest from before two-way still reads.
+    try JSONEncoder().encode(["A.md": "abc"]).write(to: out.appendingPathComponent(Store.mirrorManifest))
+    #expect(Store.readManifest(out)["A.md"]?.hash == "abc")
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {

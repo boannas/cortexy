@@ -105,6 +105,7 @@ enum Prefs {
     static let selectionBar = "selectionBar"           // the formatting bar over selected text
     static let captureKey = "hotkey.capture", captureTarget = "captureTarget" // the capture box, and where it adds: inbox | today
     static let mirror = "mirror", mirrorDirectory = "mirrorDirectory" // a Markdown copy of the notes, kept up to date ("" = Markdown in the data folder)
+    static let mirrorTwoWay = "mirrorTwoWay"                          // edits, new files and deletions in the copy come back
     static let spotlight = "spotlight"                                // notes in Spotlight
     static let sinkDone = "sinkDone"                                  // ticked tasks go to the bottom of their list
     static let weekFormat = "weekFormat", monthFormat = "monthFormat"             // titles of weekly and monthly notes
@@ -121,7 +122,7 @@ enum Prefs {
         codeTab: 4, trashDays: 30, backupsKept: 14,
         templatesFolder: "Templates", dailyFolder: "Daily", dailyTemplate: "", dateFormat: "yyyy-MM-dd", todayKey: "", systemCalendar: false, versionsKept: 50, webImages: false, reminders: true, remindAt: 9, touchID: false, lockOnHide: true,
         keepOpen: false, panelOpacity: 1.0, hideFromCapture: false, quickLook: true, linkPreviews: true, selectionBar: true,
-        captureKey: "", captureTarget: "inbox", mirror: false, mirrorDirectory: "", spotlight: true, sinkDone: true, weekFormat: "YYYY-'W'ww", monthFormat: "yyyy-MM", weeklyTemplate: "", monthlyTemplate: "",
+        captureKey: "", captureTarget: "inbox", mirror: false, mirrorDirectory: "", mirrorTwoWay: false, spotlight: true, sinkDone: true, weekFormat: "YYYY-'W'ww", monthFormat: "yyyy-MM", weeklyTemplate: "", monthlyTemplate: "",
         toggleKey: HotKeySpec(keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), display: "⌃⌥N").encoded,
         newNoteKey: "",
     ]
@@ -211,6 +212,7 @@ final class PanelController: NSObject {
             SpotlightIndex.update(store)
         }
         store.onMerged = { [weak self] in self?.nav.flash("Combined with edits from another Mac") }
+        store.onMirrorPulled = { [weak self] n in self?.nav.flash("\(MD.plural(n, "note")) updated from the Markdown copy") }
         // Locked notes lock again when the Mac sleeps or the screen locks.
         for name in [NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.nav.lockAll() }
@@ -225,7 +227,10 @@ final class PanelController: NSObject {
         syncTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.store.reloadIfChangedExternally()
             self?.store.maintain() // a no-op until the day changes
-            if let store = self?.store { ImageText.index(store) } // text in new images, for search
+            if let store = self?.store {
+                ImageText.index(store) // text in new images, for search
+                if UserDefaults.standard.bool(forKey: Prefs.mirrorTwoWay) { store.updateMirror() } // edits made in the Markdown copy
+            }
         }
     }
 

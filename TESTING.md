@@ -160,6 +160,12 @@
 - [ ] ล็อกโน้ต → ไฟล์ .md ของโน้ตนั้นหายจาก copy
 - [ ] Change… → เลือกโฟลเดอร์ที่มีไฟล์อยู่แล้ว → ขึ้น "Choose an empty folder"
 - [ ] ปิด copy → ถามยืนยัน → ไฟล์ใน copy ถูกลบ
+- [ ] (0.14) เปิด **Bring edits made in the copy back** → เปิดโฟลเดอร์ copy เป็น vault ใน Obsidian:
+  - แก้ไฟล์ใน Obsidian → ภายใน ~5 วินาทีโน้ตใน Cortexy เปลี่ยนตาม (มี toast "… updated from the Markdown copy")
+  - สร้างไฟล์ใหม่ใน Obsidian → เป็นโน้ตใหม่ในโฟลเดอร์ตรงกัน
+  - ลบไฟล์ใน Obsidian → โน้ตไปอยู่ Recently Deleted (กู้คืนได้)
+  - แก้โน้ตเดียวกันทั้งใน Cortexy และ Obsidian ก่อนจะ sync → ได้โน้ต "(edited in the Markdown copy)" เพิ่ม ไม่มีอะไรหาย
+  - โน้ตที่ล็อกไม่มีไฟล์ใน copy และไม่ถูกแตะ
 - [ ] Settings → Data → Import… → เลือกสำเนาของ Obsidian vault → ได้โฟลเดอร์ชื่อ vault, รูปขึ้นครบ, `[[ลิงก์]]` คลิกได้, ไม่มี `.obsidian`
 - [ ] Apple Notes: File → Export as Markdown → Import โฟลเดอร์นั้น
 - [ ] ⚠️ Spotlight (⌘Space) พิมพ์ชื่อโน้ต → ขึ้นผลจาก Cortexy → เลือกแล้วเปิดใน panel

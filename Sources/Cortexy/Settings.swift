@@ -774,6 +774,7 @@ struct DataSettings: View {
     @AppStorage(Prefs.lockOnHide) private var lockOnHide = true
     @AppStorage(Prefs.mirror) private var mirror = false
     @AppStorage(Prefs.mirrorDirectory) private var mirrorDirectory = ""
+    @AppStorage(Prefs.mirrorTwoWay) private var mirrorTwoWay = false
     @AppStorage(Prefs.spotlight) private var spotlight = true
 
     var body: some View {
@@ -891,6 +892,9 @@ struct DataSettings: View {
                             Button("Show") { if let d = PanelController.shared?.store.mirrorDirectory { NSWorkspace.shared.open(d) } }
                         }
                     }
+                    Toggle("Bring edits made in the copy back (to use it with Obsidian)", isOn: $mirrorTwoWay)
+                        .onChange(of: mirrorTwoWay) { if mirrorTwoWay { PanelController.shared?.store.updateMirror() } }
+                        .help("Edited files update their notes, new .md files become notes, a deleted file's note goes to Recently Deleted. A note changed on both sides keeps both versions.")
                 }
                 Toggle("Show notes in Spotlight", isOn: $spotlight)
                     .onChange(of: spotlight) { if let s = PanelController.shared?.store { SpotlightIndex.sync(s) } }
@@ -909,7 +913,7 @@ struct DataSettings: View {
             } header: {
                 Text("Other Apps")
             } footer: {
-                Text("The copy is plain .md files, one per note in folders like yours, rewritten whenever a note changes: open it in Obsidian, iA Writer, an AI tool or git. Edits made there are written over. Locked notes are never copied, put in Spotlight or shown to AI agents; turning the copy off or moving it removes the old one.")
+                Text("The copy is plain .md files, one per note in folders like yours, rewritten whenever a note changes: open it in Obsidian, iA Writer, an AI tool or git. Edits made there are written over unless “Bring edits back” is on. Locked notes are never copied, put in Spotlight or shown to AI agents; turning the copy off or moving it removes the old one.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
@@ -917,7 +921,7 @@ struct DataSettings: View {
                 LabeledContent("Scripting", value: "cortexy:// links · AppleScript · Services menu")
             }
             // Not the notes folder, Touch ID or the password: those aren't settings to undo by accident.
-            RestoreDefaults(keys: [Prefs.trashDays, Prefs.backupsKept, Prefs.versionsKept, Prefs.lockOnHide, Prefs.mirror, Prefs.mirrorDirectory, Prefs.spotlight])
+            RestoreDefaults(keys: [Prefs.trashDays, Prefs.backupsKept, Prefs.versionsKept, Prefs.lockOnHide, Prefs.mirror, Prefs.mirrorDirectory, Prefs.mirrorTwoWay, Prefs.spotlight])
         }
         .formStyle(.grouped)
     }

@@ -6,12 +6,12 @@ import UniformTypeIdentifiers
 // The notes outside the app: a Markdown copy kept up to date, Markdown folders brought in, and Spotlight.
 
 extension Store {
-    /// What a Markdown mirror holds: each note's file (folder path + title + ".md") and its text, attachment links
-    /// made relative to it. Not Recently Deleted, not a locked note, and nothing under a locked folder (a note
-    /// written there is plain for a moment before it's sealed). Names come out the same each time, so files
-    /// don't churn: a clash gets " 2" in the order the notes were made.
-    func mirrorPlan() -> [String: String] {
-        var out: [String: String] = [:]
+    /// What a Markdown mirror holds: each note's file (folder path + title + ".md"), its note, and its text with
+    /// attachment links made relative to it. Not Recently Deleted, not a locked note, and nothing under a locked
+    /// folder (a note written there is plain for a moment before it's sealed). Names come out the same each time,
+    /// so files don't churn: a clash gets " 2" in the order the notes were made.
+    func mirrorFiles() -> [String: (id: UUID, text: String)] {
+        var out: [String: (id: UUID, text: String)] = [:]
         func walk(_ fid: UUID, _ dir: String, depth: Int) {
             guard let f = folder(fid), !chain(fid).contains(where: \.locked) else { return }
             var used = Set<String>()
@@ -23,15 +23,36 @@ extension Store {
             }
             let up = String(repeating: "../", count: depth)
             for n in f.notes.sorted(by: { $0.created < $1.created }) where n.lock == nil && !n.isBlank {
-                out[dir + unique(Store.fileName(n.title)) + ".md"] = n.text.replacingOccurrences(of: "](attachments/", with: "](\(up)attachments/")
+                out[dir + unique(Store.fileName(n.title)) + ".md"] = (n.id, n.text.replacingOccurrences(of: "](attachments/", with: "](\(up)attachments/"))
             }
             for sub in subfolders(fid) where !Folder.isBuiltIn(sub.id) { walk(sub.id, dir + unique(Store.fileName(sub.name)) + "/", depth: depth + 1) }
         }
         walk(Folder.rootID, "", depth: 0)
         return out
     }
+    func mirrorPlan() -> [String: String] { mirrorFiles().mapValues(\.text) }
 
     static let mirrorManifest = ".cortexy-mirror.json"
+
+    /// What the copy last wrote at a path: its content's hash, its note, and the file's date then (a later date
+    /// means it was edited outside). Attachments have the hash "file".
+    struct MirrorEntry: Codable, Equatable {
+        var hash: String
+        var id: UUID?
+        var mtime: Double?
+    }
+
+    static func readManifest(_ dir: URL) -> [String: MirrorEntry] {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent(mirrorManifest)) else { return [:] }
+        if let v2 = try? JSONDecoder().decode([String: MirrorEntry].self, from: data) { return v2 }
+        if let v1 = try? JSONDecoder().decode([String: String].self, from: data) { return v1.mapValues { MirrorEntry(hash: $0) } } // before two-way
+        return [:]
+    }
+
+    static func mirrorHash(_ s: String) -> String { SHA256.hash(data: Data(s.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined() }
+    static func fileDate(_ url: URL) -> Double? {
+        ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date)?.timeIntervalSinceReferenceDate
+    }
 
     /// A folder the copy may write into: empty (hidden files aside), missing, or a Cortexy copy already.
     static func canMirror(into dir: URL) -> Bool {
@@ -41,37 +62,34 @@ extension Store {
     }
 
     /// Brings `dir` in line with `plan`: writes what changed, deletes files of notes gone (and folders left
-    /// empty), copies the attachments the notes use. A manifest remembers what it wrote, so nothing else there is
-    /// touched. Edits made in the mirror are written over: it's a copy, not a second place to write.
-    static func syncMirror(_ plan: [String: String], attachments: URL, to dir: URL) {
+    /// empty) and the files in `drop` (brought in under another name), copies the attachments the notes use. A
+    /// manifest remembers what it wrote, so nothing else there is touched.
+    static func syncMirror(_ plan: [String: String], ids: [String: UUID] = [:], drop: [String] = [], attachments: URL, to dir: URL) {
         let fm = FileManager.default
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         let manifestURL = dir.appendingPathComponent(mirrorManifest)
-        let old = (try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: manifestURL))) ?? [:]
+        let old = readManifest(dir)
         if !fm.fileExists(atPath: manifestURL.path) { try? Data("{}".utf8).write(to: manifestURL) } // claimed before anything is written
-        func hash(_ s: String) -> String { SHA256.hash(data: Data(s.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined() }
-        var now: [String: String] = [:]
+        let inside = dir.standardizedFileURL.path + "/"
+        var now: [String: MirrorEntry] = [:]
         for (path, text) in plan {
-            let h = hash(text), file = dir.appendingPathComponent(path)
-            now[path] = h
-            guard old[path] != h || !fm.fileExists(atPath: file.path) else { continue }
-            try? fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? text.write(to: file, atomically: true, encoding: .utf8)
+            let h = mirrorHash(text), file = dir.appendingPathComponent(path)
+            if old[path]?.hash != h || !fm.fileExists(atPath: file.path) {
+                try? fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? text.write(to: file, atomically: true, encoding: .utf8)
+            }
+            now[path] = MirrorEntry(hash: h, id: ids[path], mtime: fileDate(file))
         }
         // Attachments the notes show: copied once; ones no longer used go.
-        let used = Set(plan.values.flatMap { t in
-            MD.attachmentNames(t)
-        })
-        for name in used {
+        for name in Set(plan.values.flatMap(MD.attachmentNames)) {
             let key = "attachments/" + name, dest = dir.appendingPathComponent(key)
-            now[key] = "file"
+            now[key] = MirrorEntry(hash: "file")
             if !fm.fileExists(atPath: dest.path), fm.fileExists(atPath: attachments.appendingPathComponent(name).path) {
                 try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? fm.copyItem(at: attachments.appendingPathComponent(name), to: dest)
             }
         }
-        let inside = dir.standardizedFileURL.path + "/"
-        for path in old.keys where now[path] == nil {
+        for path in Array(old.keys.filter { now[$0] == nil }) + drop.filter({ now[$0] == nil }) {
             let file = dir.appendingPathComponent(path)
             guard file.standardizedFileURL.path.hasPrefix(inside) else { continue } // never anything outside the copy
             try? fm.removeItem(at: file)
@@ -81,12 +99,98 @@ extension Store {
                 parent = parent.deletingLastPathComponent()
             }
         }
-        if let data = try? JSONEncoder().encode(now) { try? data.write(to: manifestURL, options: .atomic) }
+        if now != old, let data = try? JSONEncoder().encode(now) { try? data.write(to: manifestURL, options: .atomic) }
         let about = dir.appendingPathComponent("About this folder (Cortexy).txt")
         if !fm.fileExists(atPath: about.path) {
-            try? "Cortexy keeps a Markdown copy of your notes here, rewritten whenever they change (Settings → Data → Markdown mirror).\nEdits made here are written over: change notes in Cortexy. Locked notes are never copied here.\n"
+            try? "Cortexy keeps a Markdown copy of your notes here (Settings → Data). With “Bring edits back” on, edits, new .md files and deletions made here come back into Cortexy (a deleted file's note goes to Recently Deleted). Locked notes are never copied here.\n"
                 .write(to: about, atomically: true, encoding: .utf8)
         }
+    }
+
+    // MARK: Edits made in the copy
+
+    /// What changed in the copy since it was last written: files edited (with the hash Cortexy last wrote there),
+    /// .md files added, files deleted (an iCloud placeholder, a file only moved off this Mac, isn't a deletion).
+    struct MirrorChanges {
+        var changed: [(id: UUID, path: String, text: String, wrote: String)] = []
+        var added: [(path: String, text: String)] = []
+        var removed: [UUID] = []
+        var isEmpty: Bool { changed.isEmpty && added.isEmpty && removed.isEmpty }
+    }
+
+    static func scanMirror(_ dir: URL) -> MirrorChanges {
+        let fm = FileManager.default, manifest = readManifest(dir)
+        var out = MirrorChanges()
+        guard !manifest.isEmpty else { return out } // never written: nothing to bring back
+        let root = dir.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+        for (path, e) in manifest where e.hash != "file" {
+            let file = dir.appendingPathComponent(path)
+            guard file.standardizedFileURL.path.hasPrefix(dir.standardizedFileURL.path + "/") else { continue }
+            if !fm.fileExists(atPath: file.path) {
+                let placeholder = file.deletingLastPathComponent().appendingPathComponent("." + file.lastPathComponent + ".icloud")
+                if let id = e.id, !fm.fileExists(atPath: placeholder.path) { out.removed.append(id) }
+                continue
+            }
+            guard let id = e.id, fileDate(file) != e.mtime, let text = try? String(contentsOf: file, encoding: .utf8), mirrorHash(text) != e.hash else { continue }
+            out.changed.append((id, path, text, e.hash))
+        }
+        if let walk = fm.enumerator(at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+            for case let url as URL in walk where url.pathExtension.lowercased() == "md" {
+                let full = url.resolvingSymlinksInPath().standardizedFileURL.path
+                guard full.hasPrefix(root) else { continue }
+                let rel = String(full.dropFirst(root.count))
+                guard manifest[rel] == nil, !rel.hasPrefix("attachments/"), let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+                out.added.append((rel, text))
+            }
+        }
+        return out
+    }
+
+    /// Brings the copy's changes in. An edit replaces its note's text, unless the note changed here too since the
+    /// copy was written: then the copy's version comes in as a note of its own beside it, so nothing is lost. A
+    /// new file becomes a note in the matching folder (titled by its file name); a deleted file's note goes to
+    /// Recently Deleted. Locked notes and folders are left alone. Returns how many notes changed, and the files
+    /// brought in by id (the copy may write them under another name).
+    func applyMirror(_ c: MirrorChanges, from dir: URL) -> (count: Int, adopted: [UUID: String]) {
+        let current = Dictionary(mirrorFiles().map { ($0.value.id, Store.mirrorHash($0.value.text)) }) { a, _ in a }
+        func open(_ fid: UUID) -> Bool { !inTrash(fid) && !chain(fid).contains(where: \.locked) }
+        func fromCopy(_ text: String, path: String) -> String {
+            let depth = path.components(separatedBy: "/").count - 1
+            let back = text.replacingOccurrences(of: "](" + String(repeating: "../", count: depth) + "attachments/", with: "](attachments/")
+            return rehome(back.replacingOccurrences(of: "\r\n", with: "\n"), base: dir.appendingPathComponent(path).deletingLastPathComponent(), byName: [:])
+        }
+        var count = 0, adopted: [UUID: String] = [:]
+        for ch in c.changed {
+            guard let f = folderOf(ch.id), let n = note(f.id, ch.id), n.lock == nil, open(f.id) else { continue }
+            let text = fromCopy(ch.text, path: ch.path)
+            if current[ch.id].map({ $0 != ch.wrote }) ?? true { // edited on both sides: keep both
+                if let id = addNote(to: f.id, text: "# \(n.title) (edited in the Markdown copy)\n" + text) { adopted[id] = ch.path }
+            } else {
+                updateNote(f.id, ch.id) { $0.text = text; $0.modified = Date() }
+            }
+            count += 1
+        }
+        for a in c.added {
+            var fid = Folder.rootID, ok = true
+            for name in a.path.components(separatedBy: "/").dropLast() {
+                if let sub = subfolders(fid).first(where: { Store.fileName($0.name) == name || $0.name == name }) { fid = sub.id } else { fid = addFolder(name, in: fid) }
+                if !open(fid) { ok = false; break }
+            }
+            guard ok else { continue }
+            var text = fromCopy(a.text, path: a.path)
+            let title = ((a.path as NSString).lastPathComponent as NSString).deletingPathExtension
+            if MD.title(text) != title { // its file name is how it's found (and named again)
+                let cut = MD.frontmatter(text)?.length ?? 0
+                text = (text as NSString).replacingCharacters(in: NSRange(location: cut, length: 0), with: "# \(title)\n")
+            }
+            if let id = addNote(to: fid, text: text) { adopted[id] = a.path; count += 1 }
+        }
+        for id in c.removed {
+            guard let f = folderOf(id), note(f.id, id)?.lock == nil, open(f.id) else { continue }
+            trashNote(f.id, id)
+            count += 1
+        }
+        return (count, adopted)
     }
 
     /// Takes a copy away (turned off, or moved elsewhere): the files it wrote, its manifest and note, and the
@@ -94,7 +198,8 @@ extension Store {
     /// locked later in plain text.
     static func removeMirror(at dir: URL) {
         let fm = FileManager.default, manifestURL = dir.appendingPathComponent(mirrorManifest)
-        guard let old = try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: manifestURL)) else { return }
+        let old = readManifest(dir)
+        guard fm.fileExists(atPath: manifestURL.path) else { return }
         let inside = dir.standardizedFileURL.path + "/"
         for path in old.keys {
             let file = dir.appendingPathComponent(path)
@@ -118,12 +223,34 @@ extension Store {
     }
 
     private static let mirrorQueue = DispatchQueue(label: "cortexy.mirror", qos: .utility)
+    private static var mirrorBusy = false, mirrorAgain = false // only touched on the main thread
 
-    /// After a save, when the mirror is on: planned here (it reads the notes), written in the background.
+    /// After a save, and every few seconds when edits come back: the copy's changes read in the background and
+    /// brought in here first (so writing never covers an edit made outside), then the notes written out. One
+    /// pass at a time; asked again meanwhile, it runs once more after.
     func updateMirror() {
         guard UserDefaults.standard.bool(forKey: Prefs.mirror), Store.canMirror(into: mirrorDirectory) || Prefs.text(Prefs.mirrorDirectory).isEmpty else { return }
-        let plan = mirrorPlan(), attachments = attachmentsDirectory, dir = mirrorDirectory
-        Store.mirrorQueue.async { Store.syncMirror(plan, attachments: attachments, to: dir) }
+        if Store.mirrorBusy { Store.mirrorAgain = true; return }
+        Store.mirrorBusy = true
+        let dir = mirrorDirectory, attachments = attachmentsDirectory, twoWay = UserDefaults.standard.bool(forKey: Prefs.mirrorTwoWay)
+        Store.mirrorQueue.async { [weak self] in
+            let changes = twoWay ? Store.scanMirror(dir) : MirrorChanges()
+            DispatchQueue.main.async {
+                guard let self else { Store.mirrorBusy = false; return }
+                let (count, adopted) = changes.isEmpty ? (0, [:]) : self.applyMirror(changes, from: dir)
+                if count > 0 { self.onMirrorPulled?(count) }
+                let files = self.mirrorFiles()
+                let byID = Dictionary(files.map { ($0.value.id, $0.key) }) { a, _ in a }
+                let drop = adopted.compactMap { id, path in byID[id] == path ? nil : path } // brought in, now written under its note's name
+                Store.mirrorQueue.async {
+                    Store.syncMirror(files.mapValues(\.text), ids: files.mapValues(\.id), drop: drop, attachments: attachments, to: dir)
+                    DispatchQueue.main.async {
+                        Store.mirrorBusy = false
+                        if Store.mirrorAgain { Store.mirrorAgain = false; self.updateMirror() }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: Import
