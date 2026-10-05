@@ -106,10 +106,12 @@ enum Prefs {
     static let captureKey = "hotkey.capture", captureTarget = "captureTarget" // the capture box, and where it adds: inbox | today
     static let mirror = "mirror", mirrorDirectory = "mirrorDirectory" // a Markdown copy of the notes, kept up to date ("" = Markdown in the data folder)
     static let spotlight = "spotlight"                                // notes in Spotlight
+    static let sinkDone = "sinkDone"                                  // ticked tasks go to the bottom of their list
     static let weekFormat = "weekFormat", monthFormat = "monthFormat"             // titles of weekly and monthly notes
     static let weeklyTemplate = "weeklyTemplate", monthlyTemplate = "monthlyTemplate"
 
     static var keptOpen: Bool { UserDefaults.standard.bool(forKey: keepOpen) }
+    static var sinksDone: Bool { UserDefaults.standard.object(forKey: sinkDone) as? Bool ?? true }
     /// For every window of ours: none while hidden from capture.
     static var sharing: NSWindow.SharingType { UserDefaults.standard.bool(forKey: hideFromCapture) ? .none : .readOnly }
 
@@ -119,7 +121,7 @@ enum Prefs {
         codeTab: 4, trashDays: 30, backupsKept: 14,
         templatesFolder: "Templates", dailyFolder: "Daily", dailyTemplate: "", dateFormat: "yyyy-MM-dd", todayKey: "", systemCalendar: false, versionsKept: 50, webImages: false, reminders: true, remindAt: 9, touchID: false, lockOnHide: true,
         keepOpen: false, panelOpacity: 1.0, hideFromCapture: false, quickLook: true, linkPreviews: true, selectionBar: true,
-        captureKey: "", captureTarget: "inbox", mirror: false, mirrorDirectory: "", spotlight: true, weekFormat: "YYYY-'W'ww", monthFormat: "yyyy-MM", weeklyTemplate: "", monthlyTemplate: "",
+        captureKey: "", captureTarget: "inbox", mirror: false, mirrorDirectory: "", spotlight: true, sinkDone: true, weekFormat: "YYYY-'W'ww", monthFormat: "yyyy-MM", weeklyTemplate: "", monthlyTemplate: "",
         toggleKey: HotKeySpec(keyCode: UInt32(kVK_ANSI_N), modifiers: UInt32(controlKey | optionKey), display: "⌃⌥N").encoded,
         newNoteKey: "",
     ]
@@ -805,9 +807,10 @@ final class PanelController: NSObject {
         switch url.host {
         case "hide": hide()
         case "toggle": toggle()
-        case "new":
-            nav.newNote(text: q("text") ?? "", folderName: q("folder"))
-            show(byHover: false)
+        case "new": // show=0 (the command-line tool, AI agents): made without opening the panel
+            let quiet = q("show") == "0"
+            nav.newNote(text: q("text") ?? "", folderName: q("folder"), open: !quiet)
+            if quiet { nav.flash("New note added") } else { show(byHover: false) }
         case "append": // to=inbox (default) | today | a note's title; the panel stays as it is
             if nav.append(q("text") ?? "", to: q("to")) { nav.flash("Added to \(q("to") ?? "Inbox")") }
         case "capture": CaptureWindow.shared.show(nav: nav)

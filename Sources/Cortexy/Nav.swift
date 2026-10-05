@@ -352,7 +352,16 @@ import UniformTypeIdentifiers
     // MARK: Note actions
 
     func toggleTask(_ fid: UUID, _ nid: UUID, line: Int) {
-        store.updateNote(fid, nid) { $0.text = MD.toggleTask(in: $0.text, line: line); $0.modified = Date() }
+        store.updateNote(fid, nid) { $0.text = MD.toggleTask(in: $0.text, line: line, sink: Prefs.sinksDone); $0.modified = Date() }
+    }
+
+    /// Ticked and cancelled tasks out of the note (Undo puts them back).
+    func deleteChecked(_ fid: UUID, _ nid: UUID) {
+        guard let n = store.note(fid, nid), n.lock == nil else { return }
+        let text = MD.removingDone(n.text)
+        guard text != n.text else { return flash("No checked items") }
+        store.updateNote(fid, nid) { $0.text = text }
+        flash("Checked items deleted") { [weak self] in self?.store.updateNote(fid, nid) { $0.text = n.text } }
     }
 
     func copy(_ n: Note) {
@@ -981,10 +990,17 @@ import UniformTypeIdentifiers
         }
     }
 
-    /// The days that have a daily note (by title), for the calendar's dots.
-    func dailyTitles() -> Set<String> {
+    /// The notes in the Daily folder by title (days, weeks, months), for the calendar's dots and previews.
+    func dailyNotes() -> [String: UUID] {
         let name = Prefs.text(Prefs.dailyFolder)
-        return Set(store.moveTargets.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }.map { store.folder($0.id)?.notes.map(\.title) ?? [] } ?? [])
+        let notes = store.moveTargets.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }.flatMap { store.folder($0.id)?.notes } ?? []
+        return Dictionary(notes.map { ($0.title, $0.id) }) { a, _ in a }
+    }
+    func dailyTitles() -> Set<String> { Set(dailyNotes().keys) }
+
+    /// Unfinished tasks with a date, by day (start of day), for the calendar.
+    func tasksByDay() -> [Date: [DueTask]] {
+        Dictionary(grouping: dueTasks.filter { !$0.done }) { Calendar.current.startOfDay(for: $0.date) }
     }
 
     /// ⌘D: today's note in the Daily folder, made from the daily template (Settings) the first time.
@@ -1167,6 +1183,8 @@ import UniformTypeIdentifiers
                     self?.store.updateNote(fid, nid) { $0.code.toggle() }
                 },
                 cmd("Copy Note Text", "doc.on.doc") { [weak self] in self?.copy(n) },
+                cmd("Delete Checked Items", "checklist.checked") { [weak self] in self?.deleteChecked(fid, nid) },
+                cmd("Print Note…", "printer") { [weak self] in MainActor.assumeIsolated { self?.printNote(n) } },
                 cmd("Insert Screenshot Text", "text.viewfinder") { [weak self] in self?.insertScreenshotText() },
             cmd("Version History", "clock.arrow.circlepath") { [weak self] in self?.historyNote = nid },
             cmd("Open Note in Window", "macwindow.on.rectangle") { [weak self] in self.map { NoteWindows.shared.show(nid, nav: $0) } },
@@ -1346,6 +1364,31 @@ import UniformTypeIdentifiers
             }
             do { try p.run() } catch { c.show(byHover: false) }
         }
+    }
+
+    /// The note laid out as in the editor (markup hidden, light on white), for printing.
+    @MainActor static func printView(_ text: String, note: Note, store: Store, width: CGFloat = 480) -> MarkdownTextView {
+        let tv = PreviewController.makeText()
+        tv.appearance = NSAppearance(named: .aqua) // dark text on paper, whatever the Mac's mode
+        PreviewController.configure(tv, note, store: store)
+        tv.textContainerInset = .zero
+        tv.frame = NSRect(x: 0, y: 0, width: width, height: 10)
+        tv.load(text)
+        tv.sizeToFit()
+        return tv
+    }
+
+    /// Print… (the print dialog's PDF button saves it as a PDF).
+    @MainActor func printNote(_ n: Note) {
+        guard let text = n.lock == nil ? n.text : unlocked[n.id] else { return flash("Unlock the note to print it") }
+        let info = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        info.isVerticallyCentered = false
+        let width = max(200, info.paperSize.width - info.leftMargin - info.rightMargin)
+        let op = NSPrintOperation(view: Nav.printView(text, note: n, store: store, width: width), printInfo: info)
+        op.jobTitle = n.title
+        if let c = PanelController.shared { _ = c.modal { op.run() } } else { op.run() }
     }
 
     @MainActor func copyImage(_ n: Note) {

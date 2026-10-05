@@ -155,14 +155,50 @@ enum MD {
         return ns.replacingCharacters(in: box, with: isDone(ns.substring(with: box)) ? " " : "x")
     }
 
-    /// Ticking a repeating task (`🔁 every week`) also adds its next one, below it.
-    static func toggleTask(in text: String, line i: Int) -> String {
+    /// Ticking a repeating task (`🔁 every week`) also adds its next one, below it. `sink`: a ticked task goes
+    /// to the bottom of its list, an unticked one back above the ticked ones (Settings).
+    static func toggleTask(in text: String, line i: Int, sink: Bool = false) -> String {
         var ls = text.components(separatedBy: "\n")
         guard ls.indices.contains(i) else { return text }
         let next = taskStatus(ls[i]).map(isDone) == false ? nextOccurrence(ls[i]) : nil
         ls[i] = toggleTask(ls[i])
         if let next { ls.insert(next, at: i + 1) }
+        if sink, let plan = sinkOrder(ls, at: i) { ls.replaceSubrange(plan.run, with: plan.order.map { ls[$0] }) }
         return ls.joined(separator: "\n")
+    }
+
+    /// The task list around line `i` (tasks next to each other, at its indent, none with sub-items) and its new
+    /// order with that line moved: below the last unticked one when it's done, above the first ticked one when
+    /// it isn't. nil when it stays where it is.
+    static func sinkOrder(_ ls: [String], at i: Int) -> (run: Range<Int>, order: [Int])? {
+        guard ls.indices.contains(i), let status = taskStatus(ls[i]) else { return nil }
+        let level = indentLevel(ls[i])
+        func sibling(_ k: Int) -> Bool { ls.indices.contains(k) && taskStatus(ls[k]) != nil && indentLevel(ls[k]) == level }
+        var lo = i, hi = i
+        while sibling(lo - 1) { lo -= 1 }
+        while sibling(hi + 1) { hi += 1 }
+        // A task with sub-items would leave them behind: the list stays as it is.
+        if (lo...hi).contains(where: { ls.indices.contains($0 + 1) && indentLevel(ls[$0 + 1]) > level && !ls[$0 + 1].trimmingCharacters(in: .whitespaces).isEmpty }) { return nil }
+        var order = Array(lo...hi).filter { $0 != i }
+        let done = isDone(status)
+        let at = done ? (order.lastIndex { !isDone(taskStatus(ls[$0]) ?? " ") }.map { $0 + 1 } ?? 0)
+                      : (order.firstIndex { isDone(taskStatus(ls[$0]) ?? " ") } ?? order.count)
+        order.insert(i, at: at)
+        return order == Array(lo...hi) ? nil : (lo..<hi + 1, order)
+    }
+
+    /// "Delete Checked Items": ticked and cancelled tasks gone, with the lines nested under them.
+    static func removingDone(_ text: String) -> String {
+        var out: [String] = [], skipping: Int?
+        for line in text.components(separatedBy: "\n") {
+            if let level = skipping {
+                if indentLevel(line) > level, !line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+                skipping = nil
+            }
+            if let s = taskStatus(line), isDone(s) { skipping = indentLevel(line); continue }
+            out.append(line)
+        }
+        return out.joined(separator: "\n")
     }
 
     /// The line with its box set to `status` (a plain line or list item becomes a task first).

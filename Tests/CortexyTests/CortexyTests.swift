@@ -1913,6 +1913,12 @@ private func pngFile(in dir: URL) throws -> String {
     h.tv.restyle(force: true)
     let eq = (h.tv.string as NSString).range(of: "2 =").location + 2
     #expect(h.tv.textStorage!.attribute(.cxMarker, at: eq, effectiveRange: nil) as? String == "sum:24,000")
+    // Changing the name's value updates the sum below at once.
+    h.tv.setSelectedRange(NSRange(location: 7, length: 6)) // "12,000"
+    h.tv.insertText("5", replacementRange: h.tv.selectedRange())
+    h.tv.restyle()
+    let eq2 = (h.tv.string as NSString).range(of: "2 =").location + 2
+    #expect(h.tv.textStorage!.attribute(.cxMarker, at: eq2, effectiveRange: nil) as? String == "sum:10")
 }
 
 @MainActor @Test func appendingFromAnywhere() {
@@ -2136,6 +2142,77 @@ private func pngFile(in dir: URL) throws -> String {
     let list = SuggestionList(items: many, highlighted: nil, kind: .link, maxHeight: 200) { _ in }
     #expect(list.height == 200)
     #expect(SuggestionList(items: ["a", "b"], highlighted: 0, kind: .link, maxHeight: 200) { _ in }.height == 2 * SuggestionList.row + 8)
+}
+
+/// The `cortexy` tool and its MCP server: reads notes (never locked ones, nor Recently Deleted), and hands new
+/// notes and additions to the app as cortexy:// links.
+@MainActor @Test func commandLineAndMCP() throws {
+    let dir = tempDir()
+    let s = Store(testing: dir)
+    let work = s.addFolder("Work")
+    _ = s.addNote(to: work, text: "# Budget Plan\nrent 12,000 this month")
+    let secret = s.addNote(to: Folder.rootID, text: "# Secret plan\nx")!
+    s.updateNote(Folder.rootID, secret) { $0.lock = "v1:x"; $0.lockedTitle = "Secret plan"; $0.text = "" }
+    s.save()
+    let bin = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent(".build/debug/cortexy-cli")
+    func run(_ args: [String], input: String = "") throws -> (out: String, err: String) {
+        let p = Process()
+        p.executableURL = bin
+        p.arguments = args
+        p.environment = ["CORTEXY_DATA_DIR": dir.path, "CORTEXY_DRY_RUN": "1"]
+        let i = Pipe(), o = Pipe(), e = Pipe()
+        p.standardInput = i; p.standardOutput = o; p.standardError = e
+        try p.run()
+        i.fileHandleForWriting.write(Data(input.utf8))
+        try i.fileHandleForWriting.close()
+        p.waitUntilExit()
+        return (String(decoding: o.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self), String(decoding: e.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+    }
+    let found = try run(["search", "plan"]).out
+    #expect(found.contains("Budget Plan  —  Work") && !found.contains("Secret"))
+    #expect(try run(["read", "budget plan"]).out.hasPrefix("# Budget Plan\nrent 12,000"))
+    #expect(try run(["append", "milk", "--to", "today"]).err.contains("cortexy://append?text=milk&to=today&show=0"))
+
+    let requests = [
+        #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+        #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+        #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_notes","arguments":{"query":"rent"}}}"#,
+        ##"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"create_note","arguments":{"text":"# From an agent","folder":"AI"}}}"##,
+        #"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"read_note","arguments":{"title":"Secret plan"}}}"#,
+    ].joined(separator: "\n") + "\n"
+    let (out, err) = try run(["mcp"], input: requests)
+    let replies = out.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+    #expect(replies.map { $0["id"] as? Int } == [1, 2, 3, 4, 5]) // nothing for the notification
+    #expect(((replies[0]["result"] as? [String: Any])?["serverInfo"] as? [String: Any])?["name"] as? String == "cortexy")
+    #expect(((replies[1]["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.count == 5)
+    func text(_ r: [String: Any]) -> String { (((r["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
+    #expect(text(replies[2]).contains("Budget Plan"))
+    #expect(err.contains("cortexy://new?text=%23%20From%20an%20agent&folder=AI&show=0"))
+    #expect(text(replies[4]).contains("No note titled") && (replies[4]["result"] as? [String: Any])?["isError"] as? Bool == true) // locked: not there
+}
+
+/// Ticked tasks go to the bottom of their list (unticked ones come back above them); Delete Checked Items
+/// clears them with what's nested under them; a note prints laid out like the editor.
+@MainActor @Test func checkedItemsSinkAndClear() throws {
+    let list = "Shop\n- [ ] milk\n- [ ] eggs\n- [x] bread\nafter"
+    #expect(MD.toggleTask(in: list, line: 1, sink: true) == "Shop\n- [ ] eggs\n- [x] milk\n- [x] bread\nafter")
+    #expect(MD.toggleTask(in: "- [ ] b\n- [x] a\n- [x] c", line: 2, sink: true) == "- [ ] b\n- [ ] c\n- [x] a") // unticked: back above the ticked
+    #expect(MD.toggleTask(in: list, line: 1) == "Shop\n- [x] milk\n- [ ] eggs\n- [x] bread\nafter")                // setting off: stays
+    #expect(MD.toggleTask(in: "- [ ] a\n  - sub\n- [ ] b", line: 0, sink: true) == "- [x] a\n  - sub\n- [ ] b")     // has sub-items: stays
+    #expect(MD.removingDone("- [x] a\n  - note on a\n- [ ] b\n- [-] c\ntext") == "- [ ] b\ntext")
+
+    let s = Store(testing: tempDir()), nav = Nav(store: s)
+    let n = s.addNote(to: Folder.rootID, text: "- [x] done\n- [ ] todo")!
+    nav.deleteChecked(Folder.rootID, n)
+    #expect(s.note(Folder.rootID, n)?.text == "- [ ] todo")
+    nav.undoLast()
+    #expect(s.note(Folder.rootID, n)?.text == "- [x] done\n- [ ] todo")
+
+    let view = Nav.printView("# Title\n- [ ] task\n**bold**", note: s.note(Folder.rootID, n)!, store: s)
+    #expect(view.frame.height > 40 && view.markdown().hasPrefix("# Title"))
+    #expect(!view.dataWithPDF(inside: view.bounds).isEmpty)
 }
 
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
@@ -2720,6 +2797,7 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(heights.allSatisfy { $0 <= home + 1 }, "came home past its height: \(heights.map { Int($0) })")
     #expect(abs(c.layout.height - home) <= 1)
 }
+
 
 
 

@@ -19,7 +19,11 @@ swift build -c release ${ARCH[@]+"${ARCH[@]}"}
 APP=build/Cortexy.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$(swift build -c release ${ARCH[@]+"${ARCH[@]}"} --show-bin-path)/Cortexy" "$APP/Contents/MacOS/Cortexy"
+BIN="$(swift build -c release ${ARCH[@]+"${ARCH[@]}"} --show-bin-path)"
+cp "$BIN/Cortexy" "$APP/Contents/MacOS/Cortexy"
+# The command-line tool / MCP server (Helpers: "cortexy" beside "Cortexy" would clash on a case-insensitive disk).
+mkdir -p "$APP/Contents/Helpers"
+cp "$BIN/cortexy-cli" "$APP/Contents/Helpers/cortexy"
 cp Resources/AppIcon.icns Resources/Cortexy.sdef "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -31,8 +35,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>Cortexy</string>
     <key>CFBundleExecutable</key><string>Cortexy</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.10.4</string>
-    <key>CFBundleVersion</key><string>15</string>
+    <key>CFBundleShortVersionString</key><string>0.11.0</string>
+    <key>CFBundleVersion</key><string>16</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>NSAppleScriptEnabled</key><true/>
     <key>OSAScriptingDefinition</key><string>Cortexy.sdef</string>
@@ -55,6 +59,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+codesign --force --sign - "$APP/Contents/Helpers/cortexy"
 codesign --force --sign - "$APP"
 echo "Built $APP"
 

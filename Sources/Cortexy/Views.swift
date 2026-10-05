@@ -623,7 +623,9 @@ struct OverlayCard<Content: View>: View {
     }
 }
 
-/// ⇧⌘D: a month of days; a dot marks those with a daily note. Click a day for its note (made if it's not there).
+/// ⇧⌘D: a month of days. A dot marks a day with a daily note (rest on it to read the note beside the panel), an
+/// orange mark a day with tasks due (rest on it to see them). Click a day for its note (made if it's not there);
+/// the week numbers do the same for weekly notes.
 struct CalendarView: View {
     let nav: Nav
     @Local private var month = Date()
@@ -633,9 +635,13 @@ struct CalendarView: View {
         let start = cal.date(from: cal.dateComponents([.year, .month], from: month))!
         let days = cal.range(of: .day, in: .month, for: start)!.count
         let lead = (cal.component(.weekday, from: start) - Calendar.current.firstWeekday + 7) % 7
-        let have = nav.dailyTitles()
+        let notes = nav.dailyNotes(), tasks = nav.tasksByDay()
         let symbols = Nav.dateFormatter().veryShortStandaloneWeekdaySymbols ?? []
         let ordered = (0..<7).map { symbols.isEmpty ? "" : symbols[(Calendar.current.firstWeekday - 1 + $0) % 7] }
+        // Whole weeks: blanks before the 1st and after the last day.
+        let cells: [Date?] = Array(repeating: nil, count: lead) + (0..<days).map { cal.date(byAdding: .day, value: $0, to: start) }
+        let weeks = stride(from: 0, to: cells.count, by: 7).map { Array((cells + Array(repeating: nil, count: 6))[$0..<$0 + 7]) }
+        let monthNote = notes[Nav.periodTitle(.month, start)]
         OverlayCard(title: "Daily Notes", close: { nav.calendarShown = false }) {
             VStack(spacing: 8) {
                 HStack {
@@ -645,41 +651,75 @@ struct CalendarView: View {
                     Spacer()
                     MiniButton(symbol: "chevron.right", help: "Next Month") { month = cal.date(byAdding: .month, value: 1, to: month)! }
                 }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 4) {
-                    // Separate IDs for the three runs: shared ones (1…6) made the grid drop the month's first days.
-                    ForEach(0..<7, id: \.self) { Text(ordered[$0]).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).id("h\($0)") }
-                    ForEach(0..<lead, id: \.self) { Color.clear.frame(height: 30).id("l\($0)") }
-                    ForEach(1...days, id: \.self) { d in
-                        let date = cal.date(byAdding: .day, value: d - 1, to: start)!
-                        let today = cal.isDateInToday(date), has = have.contains(Nav.periodTitle(.day, date))
-                        Button {
-                            nav.calendarShown = false
-                            nav.openPeriodic(.day, date: date)
-                        } label: {
-                            VStack(spacing: 2) {
-                                Text("\(d)").font(.system(size: 12, weight: today ? .bold : .regular)).foregroundStyle(today ? Color.cortexyAccentText : .primary)
-                                Circle().fill(has ? Color.cortexyAccent : .clear).frame(width: 4, height: 4)
+                Grid(horizontalSpacing: 2, verticalSpacing: 4) {
+                    GridRow {
+                        Text("W").font(.system(size: 9, weight: .medium)).foregroundStyle(.tertiary)
+                        ForEach(0..<7, id: \.self) { Text(ordered[$0]).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).frame(maxWidth: .infinity) }
+                    }
+                    ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
+                        GridRow {
+                            // A day after the row's first: with Sunday-first weeks, Sunday is the ISO week before.
+                            weekCell(week.compactMap { $0 }.dropFirst().first ?? week.compactMap { $0 }.first ?? start, notes: notes)
+                            ForEach(0..<7, id: \.self) { k in
+                                if let date = week[k] { dayCell(date, note: notes[Nav.periodTitle(.day, date)], tasks: tasks[cal.startOfDay(for: date)] ?? []) }
+                                else { Color.clear.frame(height: 32) }
                             }
-                            .frame(maxWidth: .infinity, minHeight: 30)
-                            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(today ? Color.cortexyAccent.opacity(0.14) : .clear))
-                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-                        .help(has ? "Open this day's note" : "Make this day's note")
                     }
                 }
                 HStack {
                     Button("This Week") { nav.calendarShown = false; nav.openPeriodic(.week) }
-                    Button("\(Nav.expand("{{date:LLLL}}", date: start).text) Note") { nav.calendarShown = false; nav.openPeriodic(.month, date: start) }
+                    let monthButton = Button("\(Nav.expand("{{date:LLLL}}", date: start).text) Note") { nav.calendarShown = false; nav.openPeriodic(.month, date: start) }
+                    if let monthNote { monthButton.previewOnHover(.note(monthNote)) } else { monthButton }
                     Spacer()
                     Button("Today") { month = Date() }
                 }
                 .font(.system(size: 12))
                 .buttonStyle(.plain)
                 .foregroundStyle(Color.cortexyAccentText)
+                Text("Rest on a day to read its note · click to open or make it").font(.system(size: 10)).foregroundStyle(.tertiary)
             }
             .padding(12)
         }
+    }
+
+    @ViewBuilder private func dayCell(_ date: Date, note: UUID?, tasks: [Nav.DueTask]) -> some View {
+        let today = Calendar.current.isDateInToday(date), day = Calendar(identifier: .gregorian).component(.day, from: date)
+        let overdue = tasks.contains { $0.due == .overdue }
+        let cell = Button {
+            nav.calendarShown = false
+            nav.openPeriodic(.day, date: date)
+        } label: {
+            VStack(spacing: 2) {
+                Text("\(day)").font(.system(size: 12, weight: today ? .bold : .regular)).foregroundStyle(today ? Color.cortexyAccentText : .primary)
+                HStack(spacing: 2) {
+                    Circle().fill(note != nil ? Color.cortexyAccent : .clear).frame(width: 4, height: 4)
+                    if !tasks.isEmpty { Capsule().fill(overdue ? Color.red : .orange).frame(width: tasks.count > 1 ? 8 : 4, height: 4) }
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 32)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(today ? Color.cortexyAccent.opacity(0.14) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(tasks.isEmpty ? (note != nil ? "Open this day's note" : "Make this day's note")
+              : MD.plural(tasks.count, "task") + " due:\n" + tasks.map { "• " + ($0.text.isEmpty ? "Untitled task" : $0.text) }.joined(separator: "\n"))
+        if let note { cell.previewOnHover(.note(note)) } else { cell }
+    }
+
+    @ViewBuilder private func weekCell(_ date: Date, notes: [String: UUID]) -> some View {
+        let iso = Calendar(identifier: .iso8601).component(.weekOfYear, from: date)
+        let note = notes[Nav.periodTitle(.week, date)]
+        let cell = Button {
+            nav.calendarShown = false
+            nav.openPeriodic(.week, date: date)
+        } label: {
+            Text("\(iso)").font(.system(size: 9, weight: note != nil ? .bold : .regular)).foregroundStyle(note != nil ? Color.cortexyAccentText : Color.secondary)
+                .frame(width: 18, height: 32).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(note != nil ? "Week \(iso)'s note" : "Make week \(iso)'s note")
+        if let note { cell.previewOnHover(.note(note)) } else { cell }
     }
 }
 
@@ -928,9 +968,12 @@ struct NoteMenu: View {
         Button("Version History…") { nav.historyNote = note.id }
         Button("Show in Graph") { GraphWindow.shared.show(nav: nav, around: note.id) }
         Divider()
+        Button("Delete Checked Items") { nav.deleteChecked(fid, note.id) }
+        Divider()
         Button("Copy Text") { nav.copy(note) }
         Button("Copy as Image") { nav.copyImage(note) }
         Button("Export as Image…") { nav.exportImage(note) }
+        Button("Print… (or Save as PDF)") { nav.printNote(note) }
         Divider()
         Button("Delete Note", role: .destructive) { nav.requestDelete(.note(fid, note)) }
     }

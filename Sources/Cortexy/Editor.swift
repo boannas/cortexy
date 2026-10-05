@@ -198,8 +198,6 @@ enum Styler {
         }
 
         var sumCache: [Int: String]?
-        // ponytail: only restyled lines show new results; changing `rent = …` updates `rent * 2 =` below when that line
-        // is restyled (caret through it, or reopening). Restyle every "=" line on such edits if that's missed.
         func sums() -> [Int: String] { // read once a style, only if a line asks (names set above it count)
             if sumCache == nil { sumCache = Calc.results(storage.string) }
             return sumCache!
@@ -874,7 +872,9 @@ final class MarkdownTextView: NSTextView {
         } else {
             let parts = (dirty.map { [$0] } ?? []) + (active != lastActive ? [active, lastActive] : [])
             guard !parts.isEmpty else { return }
-            let ranges = Set(parts.map { Styler.paragraphs(ns, $0) })
+            var ranges = Set(parts.map { Styler.paragraphs(ns, $0) })
+            // An edit on a line with "=" (rent = 12,000) changes the sums below: their lines show new results.
+            if let d = dirty, ns.substring(with: Styler.paragraphs(ns, d)).contains("=") { ranges.formUnion(Self.sumLines(ns)) }
             if editing {
                 // What would really be restyled (a table goes whole) against the paragraphs being edited.
                 let at = min(storage.editedRange.location, ns.length)
@@ -889,6 +889,16 @@ final class MarkdownTextView: NSTextView {
         metaLines = meta
         typingAttributes = Styler.base(style)
         needsDisplay = true
+    }
+
+    /// The lines ending in "=" (sums to show).
+    static func sumLines(_ ns: NSString) -> [NSRange] {
+        guard ns.range(of: "=").location != NSNotFound else { return [] }
+        var out: [NSRange] = []
+        ns.enumerateSubstrings(in: NSRange(location: 0, length: ns.length), options: .byParagraphs) { line, r, _, _ in
+            if let t = line?.trimmingCharacters(in: .whitespaces), t.hasSuffix("="), !t.hasSuffix("==") { out.append(ns.paragraphRange(for: r)) }
+        }
+        return out
     }
 
     // MARK: Drawn markers (checkboxes, bullets)
@@ -1130,6 +1140,7 @@ final class MarkdownTextView: NSTextView {
                 let end = NSMaxRange(line) > 0 && (string as NSString).character(at: NSMaxRange(line) - 1) == 10 ? NSMaxRange(line) - 1 : NSMaxRange(line)
                 replace(NSRange(location: end, length: 0), with: "\n" + next)
             }
+            if Prefs.sinksDone { sinkTask(at: line.location) }
             isEditable = !locked
             return
         }
@@ -1280,6 +1291,25 @@ final class MarkdownTextView: NSTextView {
               let src = st.attribute(.cxSource, at: v[0], effectiveRange: nil) as? String else { return }
         replace(NSRange(location: v[0], length: 1), with: MD.resized(src, width: v[1] > 0 ? v[1] : nil))
         convertTypedAttachments()
+    }
+
+    /// The task at `loc` to its place in its list: a ticked one below the unticked ones, an unticked one back
+    /// above the ticked ones. Its images and files go along (the lines move as they are).
+    private func sinkTask(at loc: Int) {
+        let ns = string as NSString
+        let lines = string.components(separatedBy: "\n")
+        let i = ns.substring(to: min(loc, ns.length)).components(separatedBy: "\n").count - 1
+        guard let plan = MD.sinkOrder(lines, at: i), let st = textStorage else { return }
+        var starts: [Int] = [], at = 0 // where each line starts
+        for l in lines { starts.append(at); at += (l as NSString).length + 1 }
+        func range(_ k: Int) -> NSRange { NSRange(location: starts[k], length: (lines[k] as NSString).length) }
+        let whole = NSUnionRange(range(plan.run.lowerBound), range(plan.run.upperBound - 1))
+        let new = NSMutableAttributedString()
+        for (n, k) in plan.order.enumerated() {
+            if n > 0 { new.append(NSAttributedString(string: "\n", attributes: Styler.base(style))) }
+            new.append(st.attributedSubstring(from: range(k)))
+        }
+        replace(whole, with: new)
     }
 
     private func copyToPasteboard(_ s: String) {

@@ -97,6 +97,7 @@ struct GeneralSettings: View {
     @AppStorage(Prefs.quickLook) private var quickLook = true
     @AppStorage(Prefs.linkPreviews) private var linkPreviews = true
     @AppStorage(Prefs.selectionBar) private var selectionBar = true
+    @AppStorage(Prefs.sinkDone) private var sinkDone = true
     @Local private var atLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -145,6 +146,7 @@ struct GeneralSettings: View {
                 Toggle("Load web images in every note", isOn: $webImages)
                 Toggle("Double-click an attachment to preview it (Quick Look)", isOn: $quickLook)
                 Toggle("Show formatting buttons over selected text", isOn: $selectionBar)
+                Toggle("Move ticked tasks to the bottom of their list", isOn: $sinkDone)
                 Toggle("Look up web links: a pasted link's title, a card when the pointer rests on one", isOn: $linkPreviews)
                     .help("Each lookup asks the link's site for its page")
                     .help("For ![](https://…) in notes. Off, a note's web images load only after you press Load in it: fetching one tells its server you opened the note.")
@@ -225,7 +227,7 @@ struct GeneralSettings: View {
                        Prefs.codeTab, Prefs.webImages, Prefs.reminders, Prefs.remindAt, Prefs.templatesFolder, Prefs.dailyFolder,
                        Prefs.dailyTemplate, Prefs.dateFormat, Prefs.systemCalendar, Prefs.dateLanguage,
                        Prefs.weeklyTemplate, Prefs.monthlyTemplate, Prefs.weekFormat, Prefs.monthFormat,
-                       Prefs.keepOpen, Prefs.panelOpacity, Prefs.hideFromCapture, Prefs.quickLook, Prefs.linkPreviews, Prefs.selectionBar]
+                       Prefs.keepOpen, Prefs.panelOpacity, Prefs.hideFromCapture, Prefs.quickLook, Prefs.linkPreviews, Prefs.selectionBar, Prefs.sinkDone]
 }
 
 /// A tab's "Restore Defaults": its settings back to how Cortexy comes (asks first).
@@ -892,10 +894,22 @@ struct DataSettings: View {
                 }
                 Toggle("Show notes in Spotlight", isOn: $spotlight)
                     .onChange(of: spotlight) { if let s = PanelController.shared?.store { SpotlightIndex.sync(s) } }
+                LabeledContent("AI agents (MCP)") {
+                    HStack {
+                        Button("Copy for Claude Code") { copy("claude mcp add cortexy -- \"\(Self.helper)\" mcp") }
+                        Button("Copy for Claude Desktop") {
+                            copy("{\n  \"mcpServers\": {\n    \"cortexy\": { \"command\": \"\(Self.helper)\", \"args\": [\"mcp\"] }\n  }\n}")
+                        }
+                    }
+                }
+                .help("Lets an AI agent search, read and add to your notes (never locked ones). Paste in Terminal, or into Claude Desktop's config.")
+                LabeledContent("Command line") {
+                    Button("Copy Path") { copy(Self.helper) }.help("cortexy list | search | read | new | append | mcp")
+                }
             } header: {
                 Text("Other Apps")
             } footer: {
-                Text("The copy is plain .md files, one per note in folders like yours, rewritten whenever a note changes: open it in Obsidian, iA Writer, an AI tool or git. Edits made there are written over. Locked notes are never copied or put in Spotlight; turning the copy off or moving it removes the old one.")
+                Text("The copy is plain .md files, one per note in folders like yours, rewritten whenever a note changes: open it in Obsidian, iA Writer, an AI tool or git. Edits made there are written over. Locked notes are never copied, put in Spotlight or shown to AI agents; turning the copy off or moving it removes the old one.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
@@ -906,6 +920,15 @@ struct DataSettings: View {
             RestoreDefaults(keys: [Prefs.trashDays, Prefs.backupsKept, Prefs.versionsKept, Prefs.lockOnHide, Prefs.mirror, Prefs.mirrorDirectory, Prefs.spotlight])
         }
         .formStyle(.grouped)
+    }
+
+    /// The `cortexy` command (and MCP server) inside the app.
+    static var helper: String { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/cortexy").path }
+
+    private func copy(_ s: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(s, forType: .string)
+        message = "Copied"
     }
 
     private func change() {

@@ -155,6 +155,7 @@ enum Welcome {
         ## More about tasks
         - [/] `- [/]` is in progress, `- [-]` is cancelled (type `/` for **Mark In Progress** or **Mark Cancelled**)
         - [ ] Add `🔁 every week` (or `every 2 days`, `every month`, `ทุกเดือน`): ticking it adds the next one with its new date
+        - Ticked tasks move to the bottom of their list (Settings → General); right-click a note → **Delete Checked Items** clears them
 
         ## Sums
         rent = 12,000
@@ -239,7 +240,7 @@ enum Welcome {
         - Make a note from one: ⋯ → New from Template, ⌘P, or a shortcut of your own
         - In a template: `{{date}}` `{{time}}` `{{weekday}}` `{{folder}}` `{{date:MMMM yyyy}}`, and `{{cursor}}` for where typing starts
         - **⌘D** opens today's note in the folder *Daily* (Settings sets the folder, a template and the date format)
-        - **⇧⌘D** opens a calendar: dots mark days with a note, click any day for its note; it also makes this week's and this month's notes (each can have its own template)
+        - **⇧⌘D** opens a calendar: dots mark days with a note (rest on one to read it), orange marks days with tasks due; click any day for its note, a week number for that week's note
         - Under a note: what it links to, what links to it, and notes that **mention** it without a link (one click links them)
         - Put `goal: 500` in a note's frontmatter to see its word count against it
         - Rest on a version in Version History to see what changed since (added in green, removed in red)
@@ -264,6 +265,8 @@ enum Welcome {
         - Settings → Data → **Keep a Markdown copy of every note**: plain .md files, kept up to date, for Obsidian, iA Writer, AI tools or git
         - Settings → Data → **Import…** brings in an Obsidian vault, a Bear or Apple Notes Markdown export, or any folder of .md files
         - Notes show up in **Spotlight** (locked ones never); pick one there to open it here
+        - **AI agents** (Claude Code, Claude Desktop) can search, read and add to your notes: Settings → Data → Copy for Claude Code; the `cortexy` command does the same in Terminal
+        - Right-click a note → **Print…** (the print dialog's PDF button saves a PDF)
 
         ## Screen sharing
         Settings → General → **Hide Cortexy from screen sharing and recordings** leaves its windows out of meetings, recordings and screenshots.
@@ -389,6 +392,7 @@ enum Welcome {
         ## งานเพิ่มเติม
         - [/] `- [/]` = กำลังทำ, `- [-]` = ยกเลิก (พิมพ์ `/` แล้วเลือก **Mark In Progress** หรือ **Mark Cancelled**)
         - [ ] ใส่ `🔁 ทุกสัปดาห์` (หรือ `ทุก 2 วัน`, `ทุกเดือน`, `every week`) ติ๊กแล้วจะได้งานรอบถัดไปพร้อมวันใหม่
+        - งานที่ติ๊กแล้วย้ายลงล่างของรายการ (Settings → General) · คลิกขวาโน้ต → **Delete Checked Items** ลบงานที่เสร็จทั้งหมด
 
         ## คิดเลข
         ค่าเช่า = 12,000
@@ -474,7 +478,7 @@ enum Welcome {
         - สร้างโน้ตจาก template: ⋯ → New from Template, ⌘P หรือคีย์ลัดที่ตั้งเอง
         - ใน template ใช้ `{{date}}` `{{time}}` `{{weekday}}` `{{folder}}` `{{date:d MMMM yyyy}}` และ `{{cursor}}` = ตำแหน่งเริ่มพิมพ์
         - **⌘D** เปิดโน้ตของวันนี้ในโฟลเดอร์ *Daily* (ตั้งชื่อโฟลเดอร์ template และรูปแบบวันที่ได้ใน Settings ตั้งชื่อเดือนเป็นภาษาไทยได้)
-        - **⇧⌘D** เปิดปฏิทิน: จุดคือวันที่มีโน้ต คลิกวันไหนก็ได้เพื่อเปิดโน้ตของวันนั้น และสร้างโน้ตประจำสัปดาห์/เดือนได้ (ตั้ง template แยกได้)
+        - **⇧⌘D** เปิดปฏิทิน: จุดคือวันที่มีโน้ต (พักเมาส์เพื่ออ่าน) ขีดส้มคือวันที่มีงานครบกำหนด คลิกวันเพื่อเปิดโน้ต คลิกเลขสัปดาห์เพื่อเปิดโน้ตประจำสัปดาห์
         - ใต้โน้ตบอกว่าลิงก์ไปไหน ใครลิงก์มา และโน้ตที่**พูดถึง**โน้ตนี้แต่ยังไม่ได้ลิงก์ (คลิกเดียวเพื่อลิงก์)
         - ใส่ `goal: 500` ใน frontmatter เพื่อดูจำนวนคำเทียบเป้า
         - พักเมาส์บนเวอร์ชันใน Version History เพื่อดูว่าเปลี่ยนอะไรไปบ้าง (เพิ่ม = เขียว, ลบ = แดง)
@@ -499,6 +503,8 @@ enum Welcome {
         - Settings → Data → **Keep a Markdown copy of every note** เก็บสำเนาเป็นไฟล์ .md ที่อัปเดตตลอด ใช้กับ Obsidian, iA Writer, เครื่องมือ AI หรือ git ได้
         - Settings → Data → **Import…** นำเข้า Obsidian vault, ไฟล์ Markdown ที่ export จาก Bear หรือ Apple Notes หรือโฟลเดอร์ .md อะไรก็ได้
         - ค้นโน้ตจาก **Spotlight** ได้ (ยกเว้นโน้ตที่ล็อก) เลือกแล้วจะเปิดใน Cortexy
+        - **AI agent** (Claude Code, Claude Desktop) ค้น อ่าน และเพิ่มโน้ตได้: Settings → Data → Copy for Claude Code · คำสั่ง `cortexy` ใช้ใน Terminal ได้เหมือนกัน
+        - คลิกขวาโน้ต → **Print…** (ปุ่ม PDF ในหน้าต่าง print = บันทึกเป็น PDF)
 
         ## แชร์จอ
         Settings → General → **Hide Cortexy from screen sharing and recordings** ซ่อนหน้าต่างของ Cortexy จากการประชุม การอัดจอ และ screenshot

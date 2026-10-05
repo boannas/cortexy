@@ -19,6 +19,26 @@
             "target": "Cortexy",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release Cortexy"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cortexy}",
+            "name": "Debug cortexy-cli",
+            "target": "cortexy-cli",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug cortexy-cli"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cortexy}",
+            "name": "Release cortexy-cli",
+            "target": "cortexy-cli",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release cortexy-cli"
         }
     ]
 }
