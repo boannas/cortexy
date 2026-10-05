@@ -361,8 +361,8 @@ import UniformTypeIdentifiers
         guard let n = store.note(fid, nid), n.lock == nil else { return }
         let text = MD.removingDone(n.text)
         guard text != n.text else { return flash("No checked items") }
-        store.updateNote(fid, nid) { $0.text = text }
-        flash("Checked items deleted") { [weak self] in self?.store.updateNote(fid, nid) { $0.text = n.text } }
+        store.updateNote(fid, nid) { $0.text = text; $0.modified = Date() } // modified: Spotlight and other Macs see the change
+        flash("Checked items deleted") { [weak self] in self?.store.updateNote(fid, nid) { $0.text = n.text; $0.modified = Date() } }
     }
 
     func copy(_ n: Note) {
@@ -1063,7 +1063,8 @@ import UniformTypeIdentifiers
                 ?? store.addNote(to: Folder.rootID, text: "# Inbox\n").map { (Folder.rootID, $0) }
         default:
             if resolve(title: t) == nil, lockedAwayNote(titled: t) != nil { flash("“\(t)” is in a locked folder"); return false }
-            place = resolve(title: t).map { ($0.0, $0.1.id) } ?? store.addNote(to: targetFolder(named: nil), text: "# \(t)\n").map { (targetFolder(named: nil), $0) }
+            // A new one at home: the folder left open may be locked away (written there, it'd be plain text).
+            place = resolve(title: t).map { ($0.0, $0.1.id) } ?? store.addNote(to: Folder.rootID, text: "# \(t)\n").map { (Folder.rootID, $0) }
         }
         guard let (fid, nid) = place, let n = store.note(fid, nid) else { return false }
         if n.lock != nil {

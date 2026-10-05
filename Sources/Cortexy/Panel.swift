@@ -444,7 +444,8 @@ final class PanelController: NSObject {
     static let minHeight: CGFloat = 220
     static let margin: CGFloat = 8         // from the screen's top and edge to the card
     private var fitHeight: CGFloat?        // what the content asked for last
-    private var floorHeight: CGFloat = 0   // at least this while an overlay (⌘O, Version History) needs room
+    private var floors: [String: CGFloat] = [:] // room asked for by what's up (an overlay, the suggestion list), by who asked
+    private var floorHeight: CGFloat { floors.values.max() ?? 0 }
     private var shownOn: NSScreen?
     let layout = PanelLayout()
     private(set) var host: NSView?
@@ -474,8 +475,9 @@ final class PanelController: NSObject {
         }
     }
 
-    func needs(atLeast h: CGFloat) {
-        floorHeight = h
+    /// At least `h` tall while `who` needs room (0: done). Each asker's own, so one ending doesn't shrink another's.
+    func needs(atLeast h: CGFloat, for who: String = "overlay") {
+        floors[who] = h > 0 ? h : nil
         if shown, let s = panel.screen ?? shownOn { refit(on: s) }
     }
 
@@ -816,10 +818,13 @@ final class PanelController: NSObject {
         switch url.host {
         case "hide": hide()
         case "toggle": toggle()
-        case "new": // show=0 (the command-line tool, AI agents): made without opening the panel
-            let quiet = q("show") == "0"
-            nav.newNote(text: q("text") ?? "", folderName: q("folder"), open: !quiet)
-            if quiet { nav.flash("New note added") } else { show(byHover: false) }
+        case "new": // show=0 (the command-line tool, AI agents): made without opening the panel, at home unless a folder is named
+            guard q("show") == "0" else {
+                nav.newNote(text: q("text") ?? "", folderName: q("folder"))
+                return show(byHover: false)
+            }
+            let made = q("folder") == nil ? store.addNote(to: Folder.rootID, text: q("text") ?? "") : nav.newNote(text: q("text") ?? "", folderName: q("folder"), open: false)
+            if made != nil { nav.flash("New note added") } // refused (a locked folder): its own message stays
         case "append": // to=inbox (default) | today | a note's title; the panel stays as it is
             if nav.append(q("text") ?? "", to: q("to")) { nav.flash("Added to \(q("to") ?? "Inbox")") }
         case "capture": CaptureWindow.shared.show(nav: nav)

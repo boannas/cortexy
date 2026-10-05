@@ -130,7 +130,9 @@ enum Styler {
 
     /// ``` lines before `location`; an odd count means `location` is inside a code block.
     static func fences(_ s: String, before location: Int) -> Int {
-        fence.numberOfMatches(in: s, range: NSRange(location: 0, length: location))
+        // Most notes have no code: a plain search says so far faster than the regex (this runs on every key).
+        guard (s as NSString).range(of: "```", options: .literal, range: NSRange(location: 0, length: location)).location != NSNotFound else { return 0 }
+        return fence.numberOfMatches(in: s, range: NSRange(location: 0, length: location))
     }
 
     /// The whole paragraphs touching `r`, clamped to the text.
@@ -180,9 +182,11 @@ enum Styler {
     }
 
     /// Styles the paragraphs touching `range` (default: everything).
-    static func style(_ storage: NSTextStorage, active: NSRange, _ st: TextStyle, in range: NSRange? = nil) {
+    /// `blocks`: the note's code blocks when the caller has them already (several ranges restyled at once).
+    static func style(_ storage: NSTextStorage, active: NSRange, _ st: TextStyle, in range: NSRange? = nil,
+                      blocks known: [(whole: NSRange, body: NSRange, lang: String)]? = nil, sums knownSums: [Int: String]? = nil) {
         let ns = storage.string as NSString
-        let blocks = st.code ? [] : codeBlocks(storage.string)
+        let blocks = st.code ? [] : known ?? codeBlocks(storage.string)
         let meta = st.code ? 0 : MD.frontmatter(storage.string)?.length ?? 0 // restyles whole, like a code block
         let full = range.map { r -> NSRange in
             let out = wholeBlocks(ns, paragraphs(ns, r), blocks)
@@ -197,7 +201,7 @@ enum Styler {
             kept.append((r, a))
         }
 
-        var sumCache: [Int: String]?
+        var sumCache = knownSums
         func sums() -> [Int: String] { // read once a style, only if a line asks (names set above it count)
             if sumCache == nil { sumCache = Calc.results(storage.string) }
             return sumCache!
@@ -873,15 +877,19 @@ final class MarkdownTextView: NSTextView {
             let parts = (dirty.map { [$0] } ?? []) + (active != lastActive ? [active, lastActive] : [])
             guard !parts.isEmpty else { return }
             var ranges = Set(parts.map { Styler.paragraphs(ns, $0) })
-            // An edit on a line with "=" (rent = 12,000) changes the sums below: their lines show new results.
-            if let d = dirty, ns.substring(with: Styler.paragraphs(ns, d)).contains("=") { ranges.formUnion(Self.sumLines(ns)) }
+            // Any edit may change a sum (a name's line edited, or deleted): the lines that show sums are styled again,
+            // with the results worked out once for all of them.
+            let sumRanges = dirty == nil ? [] : Self.sumLines(ns)
+            ranges.formUnion(sumRanges)
+            let sums = sumRanges.isEmpty ? nil : Calc.results(string)
             if editing {
                 // What would really be restyled (a table goes whole) against the paragraphs being edited.
                 let at = min(storage.editedRange.location, ns.length)
                 let near = NSUnionRange(Styler.paragraphs(ns, NSRange(location: at, length: min(storage.editedRange.length, ns.length - at))), active)
                 if ranges.contains(where: { NSUnionRange(near, Styler.withTableRows(ns, $0)) != near }) { return afterTheEdit(false) }
             }
-            for r in ranges { Styler.style(storage, active: active, style, in: r) }
+            let blocks = fences == 0 || style.code ? [] : Styler.codeBlocks(string) // once, not once per range
+            for r in ranges { Styler.style(storage, active: active, style, in: r, blocks: blocks, sums: sums) }
         }
         dirty = nil
         lastActive = active
@@ -891,12 +899,24 @@ final class MarkdownTextView: NSTextView {
         needsDisplay = true
     }
 
-    /// The lines ending in "=" (sums to show).
+    /// The lines ending in "=" (sums to show). Found by searching for "=" before a line break, not by walking
+    /// every line: this runs on each key typed on a line with "=", and walking a 3,000-line note cost frames.
     static func sumLines(_ ns: NSString) -> [NSRange] {
-        guard ns.range(of: "=").location != NSNotFound else { return [] }
-        var out: [NSRange] = []
-        ns.enumerateSubstrings(in: NSRange(location: 0, length: ns.length), options: .byParagraphs) { line, r, _, _ in
-            if let t = line?.trimmingCharacters(in: .whitespaces), t.hasSuffix("="), !t.hasSuffix("==") { out.append(ns.paragraphRange(for: r)) }
+        // No "=" at a line's end anywhere (the usual case): said by two plain searches, no walk at all.
+        guard ns.range(of: "=\n", options: .literal).location != NSNotFound || ns.range(of: "= \n", options: .literal).location != NSNotFound
+              || ns.hasSuffix("=") || ns.hasSuffix("= ") else { return [] }
+        var out: [NSRange] = [], from = 0
+        func add(_ eq: Int) { // the "=" at `eq` ends its line (spaces aside); "==" is a highlight's end, not a sum
+            if eq > 0, ns.character(at: eq - 1) == 61 { return }
+            out.append(ns.paragraphRange(for: NSRange(location: eq, length: 0)))
+        }
+        while from < ns.length {
+            let nl = ns.range(of: "\n", options: .literal, range: NSRange(location: from, length: ns.length - from))
+            let end = nl.location == NSNotFound ? ns.length : nl.location
+            var k = end - 1
+            while k >= from, ns.character(at: k) == 32 || ns.character(at: k) == 9 { k -= 1 }
+            if k >= from, ns.character(at: k) == 61 { add(k) }
+            from = end + 1
         }
         return out
     }
@@ -1295,7 +1315,7 @@ final class MarkdownTextView: NSTextView {
 
     /// The task at `loc` to its place in its list: a ticked one below the unticked ones, an unticked one back
     /// above the ticked ones. Its images and files go along (the lines move as they are).
-    private func sinkTask(at loc: Int) {
+    func sinkTask(at loc: Int) {
         let ns = string as NSString
         let lines = string.components(separatedBy: "\n")
         let i = ns.substring(to: min(loc, ns.length)).components(separatedBy: "\n").count - 1
@@ -1305,11 +1325,17 @@ final class MarkdownTextView: NSTextView {
         func range(_ k: Int) -> NSRange { NSRange(location: starts[k], length: (lines[k] as NSString).length) }
         let whole = NSUnionRange(range(plan.run.lowerBound), range(plan.run.upperBound - 1))
         let new = NSMutableAttributedString()
+        var moved: [Int: Int] = [:] // each line's new start
         for (n, k) in plan.order.enumerated() {
             if n > 0 { new.append(NSAttributedString(string: "\n", attributes: Styler.base(style))) }
+            moved[k] = whole.location + new.length
             new.append(st.attributedSubstring(from: range(k)))
         }
-        replace(whole, with: new)
+        // The caret stays in its own line (it would keep its offset and land in another task).
+        let caret = selectedRange()
+        let caretLine = plan.run.first { NSLocationInRange(caret.location, NSRange(location: starts[$0], length: (lines[$0] as NSString).length + 1)) }
+        let select = caretLine.map { NSRange(location: moved[$0]! + caret.location - starts[$0], length: caret.length) }
+        replace(whole, with: new, select: select)
     }
 
     private func copyToPasteboard(_ s: String) {
@@ -1581,7 +1607,7 @@ final class MarkdownTextView: NSTextView {
 
     func hideSuggestions() {
         guard completing || suggestionBox?.isHidden == false else { return }
-        if askedForRoom { askedForRoom = false; PanelController.shared?.needs(atLeast: 0) }
+        if askedForRoom { askedForRoom = false; PanelController.shared?.needs(atLeast: 0, for: "suggestions") }
         completing = false
         suggestions = []
         highlighted = nil
@@ -1593,7 +1619,7 @@ final class MarkdownTextView: NSTextView {
         // In the panel, room to show it: the panel grows while the list is up (a short note makes a short panel).
         if let c = PanelController.shared, window === c.panel, !askedForRoom {
             askedForRoom = true
-            c.needs(atLeast: 440)
+            c.needs(atLeast: 440, for: "suggestions")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in if self?.completing == true { self?.showSuggestions() } } // placed again once it's grown
         }
         let caret = min(selectedRange().location, (string as NSString).length)

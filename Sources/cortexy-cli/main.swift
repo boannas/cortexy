@@ -14,13 +14,15 @@ import Foundation
 
 struct Library {
     struct Folder: Decodable { let id: UUID; let name: String?; let parent: UUID?; let locked: Bool?; let notes: [Note]? }
-    struct Note: Decodable { let id: UUID; let text: String?; let lock: String?; let archived: Bool? }
+    struct Note: Decodable { let id: UUID; let text: String?; let lock: String?; let lockedTitle: String?; let archived: Bool? }
     struct Entry { let title: String; let path: String; let text: String }
 
     static let root = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
     static let trash = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
     let entries: [Entry]
+    /// Folder names and note titles that are locked (or under a lock): writes aimed at them are refused here.
+    let lockedFolders: Set<String>, lockedTitles: Set<String>
 
     /// The data folder: CORTEXY_DATA_DIR, the one chosen in Cortexy's Settings, or the default.
     static var directory: URL {
@@ -37,6 +39,14 @@ struct Library {
             while let p = out.last?.parent, let up = byID[p], seen.insert(p).inserted { out.append(up) }
             return out
         }
+        var lockedF = Set<String>(), lockedT = Set<String>()
+        for f in folders {
+            let sealedAway = chain(f).contains { $0.locked == true }
+            if sealedAway, let n = f.name { lockedF.insert(n.lowercased()) }
+            for n in f.notes ?? [] where n.lock != nil || sealedAway { lockedT.insert(Library.title(n.text ?? "", locked: n.lockedTitle).lowercased()) }
+        }
+        lockedFolders = lockedF
+        lockedTitles = lockedT
         entries = folders.flatMap { f -> [Entry] in
             let up = chain(f)
             guard !up.contains(where: { $0.id == Library.trash || $0.locked == true }) else { return [] }
@@ -48,25 +58,52 @@ struct Library {
         }
     }
 
-    /// As the app has it: the first line with words (past any frontmatter), without its Markdown markers.
-    static func title(_ text: String) -> String {
+    /// As the app has it (MD.title): the first line with words past any frontmatter and code, its Markdown markers
+    /// and inline formatting taken off (real pairs only: snake_case keeps its underscore); an image line, its alt.
+    static func title(_ text: String, locked: String? = nil) -> String {
+        if let locked { return locked }
         var lines = text.components(separatedBy: "\n")[...]
-        if lines.first?.trimmingCharacters(in: .whitespaces) == "---", let end = lines.dropFirst().firstIndex(where: { ["---", "..."].contains($0.trimmingCharacters(in: .whitespaces)) }) {
+        if lines.first?.trimmingCharacters(in: .whitespaces) == "---",
+           let end = lines.dropFirst().firstIndex(where: { ["---", "..."].contains($0.trimmingCharacters(in: .whitespaces)) }) {
             lines = lines[(end + 1)...]
         }
+        var inCode = false
         for l in lines {
-            var t = l.trimmingCharacters(in: .whitespaces)
-            t = t.replacingOccurrences(of: #"^(#{1,6} |[-*+] \[[ xX/\-]\] |[-*+] |\d+\. |> ?)"#, with: "", options: .regularExpression)
-            t = t.replacingOccurrences(of: #"\[\[(?:[^\]|\n]*\|)?([^\]\n]+)\]\]"#, with: "$1", options: .regularExpression)
-            t = t.replacingOccurrences(of: #"[*_`~]|=="#, with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
-            if !t.isEmpty { return t }
+            let t = l.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("```") { inCode.toggle(); continue }
+            if inCode || t.isEmpty { continue }
+            if let m = t.range(of: #"^!\[((?:\\.|[^\]\\])*)\]\([^)\s]+\)$"#, options: .regularExpression) {
+                let alt = String(t[m]).replacingOccurrences(of: #"^!\[((?:\\.|[^\]\\])*)\].*$"#, with: "$1", options: .regularExpression)
+                if !alt.isEmpty { return alt.replacingOccurrences(of: #"\\(.)"#, with: "$1", options: .regularExpression) }
+                continue
+            }
+            var s = t.replacingOccurrences(of: #"^(#{1,6} +|[-*+] \[[ xX/\-]\] |[-*+] |\d+\. |> ?)"#, with: "", options: .regularExpression)
+            for (pattern, template) in Library.inline { s = s.replacingOccurrences(of: pattern, with: template, options: .regularExpression) }
+            s = s.trimmingCharacters(in: .whitespaces)
+            if !s.isEmpty { return s }
         }
         return "Empty Note"
     }
+    /// The app's inline passes (MD.plainInline), in its order.
+    static let inline: [(String, String)] = [
+        (#"`([^`\n]+)`"#, "$1"),
+        (#"\[\[(?:(?!\[\[)[^\n|])+?\|((?:(?!\[\[)[^\n])+?)\]\](?!\](?!\())"#, "$1"),
+        (#"\[\[((?:(?!\[\[)[^\n|])+?)\]\](?!\](?!\())"#, "$1"),
+        (#"\[([^\]\n]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)"#, "$1"),
+        (#"(\*\*|__)(?=\S)(.{1,500}?)(?<=\S)\1"#, "$2"),
+        (#"(?<!\*)\*(?![*\s])(.{1,500}?)(?<![*\s])\*(?!\*)|(?<![_\w])_(?![_\s])(.{1,500}?)(?<![_\s])_(?![_\w])"#, "$1$2"),
+        (#"~~(?=\S)(.{1,500}?)(?<=\S)~~"#, "$1"),
+        (#"==(?=\S)(.{1,500}?)(?<=\S)=="#, "$1"),
+    ]
 
+    /// The note with this title (any case); nil rather than a guess.
     func find(_ title: String) -> Entry? {
-        entries.first { $0.title.localizedCaseInsensitiveCompare(title) == .orderedSame }
-            ?? entries.first { $0.title.localizedCaseInsensitiveContains(title) }
+        entries.first { $0.title.localizedCaseInsensitiveCompare(title.trimmingCharacters(in: .whitespaces)) == .orderedSame }
+    }
+
+    /// Titles close to one not found, to suggest.
+    func near(_ title: String) -> [String] {
+        Array(entries.filter { $0.title.localizedCaseInsensitiveContains(title) || title.localizedCaseInsensitiveContains($0.title) }.map(\.title).prefix(5))
     }
 
     func search(_ q: String) -> [(Entry, String)] {
@@ -92,6 +129,23 @@ enum Commands {
     }
 
     static func read(_ lib: Library, _ title: String) -> String? { lib.find(title).map(\.text) }
+
+    static func notFound(_ lib: Library, _ title: String) -> String {
+        let near = lib.near(title)
+        return "No note titled “\(title)”." + (near.isEmpty ? "" : " Did you mean: " + near.map { "“\($0)”" }.joined(separator: ", ") + "?")
+    }
+
+    /// Why a write would be refused by the app (a locked folder or note), said here: the app can't answer back.
+    static func refusal(_ lib: Library?, folder: String?, note: String?) -> String? {
+        guard let lib else { return nil }
+        if let f = folder?.lowercased(), lib.lockedFolders.contains(f) { return "The folder “\(folder!)” is locked in Cortexy." }
+        guard let n = note?.lowercased() else { return nil }
+        if n == "today" {
+            let daily = (UserDefaults(suiteName: "com.cortexy.app")?.string(forKey: "dailyFolder")).flatMap { $0.isEmpty ? nil : $0 } ?? "Daily"
+            return lib.lockedFolders.contains(daily.lowercased()) ? "The folder “\(daily)” is locked in Cortexy." : nil
+        }
+        return lib.lockedTitles.contains(n) && lib.find(n) == nil ? "The note “\(note!)” is locked in Cortexy." : nil
+    }
 
     /// Hands the change to the app (it opens if needed) without bringing it forward.
     static func send(_ host: String, _ items: [URLQueryItem]) -> Bool {
@@ -130,8 +184,10 @@ enum MCP {
 
     /// The answer to one request (nil for a notification).
     static func handle(_ msg: [String: Any]) -> [String: Any]? {
-        guard let method = msg["method"] as? String else { return nil }
         let id = msg["id"]
+        guard let method = msg["method"] as? String else {
+            return id == nil ? nil : ["jsonrpc": "2.0", "id": id!, "error": ["code": -32600, "message": "Invalid request: no method"]]
+        }
         if id == nil { return nil } // notifications/initialized and the like
         func reply(_ result: Any) -> [String: Any] { ["jsonrpc": "2.0", "id": id!, "result": result] }
         switch method {
@@ -159,14 +215,17 @@ enum MCP {
             case "search_notes": return (Commands.search(try Library(), s("query") ?? ""), false)
             case "read_note":
                 guard let t = s("title") else { return ("A title is needed.", true) }
-                return Commands.read(try Library(), t).map { ($0, false) } ?? ("No note titled “\(t)”.", true)
+                let lib = try Library()
+                return Commands.read(lib, t).map { ($0, false) } ?? (Commands.notFound(lib, t), true)
             case "list_notes": return (Commands.list(try Library(), folder: s("folder")), false)
             case "create_note":
                 guard let t = s("text") else { return ("Text is needed.", true) }
+                if let why = Commands.refusal(try? Library(), folder: s("folder"), note: nil) { return (why, true) }
                 return Commands.send("new", [URLQueryItem(name: "text", value: t)] + (s("folder").map { [URLQueryItem(name: "folder", value: $0)] } ?? []))
                     ? ("Created.", false) : ("Couldn't reach Cortexy.", true)
             case "append_to_note":
                 guard let t = s("text") else { return ("Text is needed.", true) }
+                if let why = Commands.refusal(try? Library(), folder: nil, note: s("note") ?? "inbox") { return (why, true) }
                 return Commands.send("append", [URLQueryItem(name: "text", value: t), URLQueryItem(name: "to", value: s("note") ?? "inbox")])
                     ? ("Added.", false) : ("Couldn't reach Cortexy.", true)
             default: return ("Unknown tool \(name).", true)
@@ -178,8 +237,10 @@ enum MCP {
 
     static func serve() {
         while let line = readLine(strippingNewline: true) {
-            guard let data = line.data(using: .utf8), let msg = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
-            guard let out = handle(msg), let json = try? JSONSerialization.data(withJSONObject: out),
+            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            let msg = line.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+            let out: [String: Any]? = msg.map(handle) ?? ["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Parse error"]]
+            guard let out, let json = try? JSONSerialization.data(withJSONObject: out),
                   let s = String(data: json, encoding: .utf8) else { continue }
             print(s)
             fflush(stdout)
@@ -206,13 +267,15 @@ case "list", "search", "read":
     switch command {
     case "list": print(Commands.list(lib, folder: folder ?? args.first))
     case "search": print(Commands.search(lib, args.joined(separator: " ")))
-    default: print(Commands.read(lib, args.joined(separator: " ")) ?? { fail("No note titled “\(args.joined(separator: " "))”.") }())
+    default: print(Commands.read(lib, args.joined(separator: " ")) ?? { fail(Commands.notFound(lib, args.joined(separator: " "))) }())
     }
 case "new":
     let folder = option("--folder")
+    if let why = Commands.refusal(try? Library(), folder: folder, note: nil) { fail(why) }
     guard Commands.send("new", [URLQueryItem(name: "text", value: args.joined(separator: " "))] + (folder.map { [URLQueryItem(name: "folder", value: $0)] } ?? [])) else { fail("Couldn't reach Cortexy.") }
 case "append":
     let to = option("--to")
+    if let why = Commands.refusal(try? Library(), folder: nil, note: to ?? "inbox") { fail(why) }
     guard Commands.send("append", [URLQueryItem(name: "text", value: args.joined(separator: " ")), URLQueryItem(name: "to", value: to ?? "inbox")]) else { fail("Couldn't reach Cortexy.") }
 default:
     print("""

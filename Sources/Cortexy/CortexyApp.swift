@@ -48,10 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         NoteWindows.shared.restore(nav: c.nav)
         SpotlightIndex.start(store)
-        prewarmTextSystem()
         // Launch activation settles after this returns and would steal key focus (closing the panel), so wait a beat.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [self] in
-            if store.isFirstRun || store.recovering || !queuedURLs.isEmpty { c.show(byHover: false) }
+            let loud = queuedURLs.contains { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems?.contains { $0.name == "show" && $0.value == "0" } != true }
+            if store.isFirstRun || store.recovering || loud { c.show(byHover: false) }
             if store.recovering { c.nav.flash("Your notes file couldn't be read yet, so the newest backup is showing. Edits you make now will replace the file.") }
             queuedURLs.forEach(c.handle)
             queuedURLs = []
@@ -62,24 +62,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         controller?.show(byHover: false)
         return false
-    }
-
-    /// The first note opened after launch waited ~0.5 s while the system loaded what a text view brings in (Writing
-    /// Tools, spelling): done here instead, a few seconds after launch, in a window that's never shown.
-    // ponytail: unmeasured guess at what loads lazily; drop it if the first open is still slow (profile with Instruments).
-    private func prewarmTextSystem() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: .borderless, backing: .buffered, defer: false)
-            w.isReleasedWhenClosed = false
-            let tv = NSTextView(frame: w.contentView!.bounds)
-            tv.isContinuousSpellCheckingEnabled = true
-            tv.isRichText = false
-            w.contentView = tv
-            w.makeFirstResponder(tv)
-            tv.string = "Cortexy"
-            tv.checkTextInDocument(nil)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { w.close() }
-        }
     }
 
     /// A note picked in Spotlight.

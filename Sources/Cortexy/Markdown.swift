@@ -177,6 +177,9 @@ enum MD {
         var lo = i, hi = i
         while sibling(lo - 1) { lo -= 1 }
         while sibling(hi + 1) { hi += 1 }
+        // The note's first line is its title: a list starting there stays put (or ticking would rename the note).
+        let first = ls.indices.dropFirst(frontmatter(ls.joined(separator: "\n"))?.lines ?? 0).first { !ls[$0].trimmingCharacters(in: .whitespaces).isEmpty }
+        if let first, (lo...hi).contains(first) { return nil }
         // A task with sub-items would leave them behind: the list stays as it is.
         if (lo...hi).contains(where: { ls.indices.contains($0 + 1) && indentLevel(ls[$0 + 1]) > level && !ls[$0 + 1].trimmingCharacters(in: .whitespaces).isEmpty }) { return nil }
         var order = Array(lo...hi).filter { $0 != i }
@@ -187,12 +190,16 @@ enum MD {
         return order == Array(lo...hi) ? nil : (lo..<hi + 1, order)
     }
 
-    /// "Delete Checked Items": ticked and cancelled tasks gone, with the lines nested under them.
+    /// "Delete Checked Items": ticked and cancelled tasks gone, with the notes nested under them. Not in code
+    /// blocks (a sample of Markdown), and an unticked subtask under a ticked one stays: it's still to do.
     static func removingDone(_ text: String) -> String {
-        var out: [String] = [], skipping: Int?
+        var out: [String] = [], skipping: Int?, inCode = false
         for line in text.components(separatedBy: "\n") {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") { inCode.toggle(); skipping = nil; out.append(line); continue }
+            if inCode { out.append(line); continue }
             if let level = skipping {
-                if indentLevel(line) > level, !line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+                let open = taskStatus(line).map { !isDone($0) } ?? false
+                if indentLevel(line) > level, !line.trimmingCharacters(in: .whitespaces).isEmpty, !open { continue }
                 skipping = nil
             }
             if let s = taskStatus(line), isDone(s) { skipping = indentLevel(line); continue }
@@ -309,9 +316,10 @@ extension MD {
     /// The title may hold brackets ("[WH+] Tasks" → `[[[WH+] Tasks]]`): it runs to the first `]]` that isn't
     /// followed by another `]` (so a title ending in "]" keeps it).
     /// Never a `[[` inside, though: a `[[` still being typed must not swallow a link further along the line.
-    static let wikiRegex = try! NSRegularExpression(pattern: #"\[\[((?:(?!\[\[)[^\n|])+?)(?:\|((?:(?!\[\[)[^\n])+?))?\]\](?!\])"#)
-    static let wikiAlias = #"\[\[(?:(?!\[\[)[^\n|])+?\|((?:(?!\[\[)[^\n])+?)\]\](?!\])"#
-    static let wikiPlain = #"\[\[((?:(?!\[\[)[^\n|])+?)\]\](?!\])"#
+    /// A third `]` straight before `(` closes a Markdown link around it (`[see [[Note]]](url)`), not the title.
+    static let wikiRegex = try! NSRegularExpression(pattern: #"\[\[((?:(?!\[\[)[^\n|])+?)(?:\|((?:(?!\[\[)[^\n])+?))?\]\](?!\](?!\())"#)
+    static let wikiAlias = #"\[\[(?:(?!\[\[)[^\n|])+?\|((?:(?!\[\[)[^\n])+?)\]\](?!\](?!\())"#
+    static let wikiPlain = #"\[\[((?:(?!\[\[)[^\n|])+?)\]\](?!\](?!\())"#
     static let codeSpanRegex = try! NSRegularExpression(pattern: #"`[^`\n]+`"#)
 
     /// The tag a `#…` match names, or nil when it's a number or a 6-digit hex color (`#decade` stays a color).

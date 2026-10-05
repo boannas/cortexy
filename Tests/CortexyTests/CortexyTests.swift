@@ -2169,6 +2169,13 @@ private func pngFile(in dir: URL) throws -> String {
         p.waitUntilExit()
         return (String(decoding: o.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self), String(decoding: e.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
     }
+    _ = s.addNote(to: Folder.rootID, text: "# my_notes **bold**")
+    let vault = s.addFolder("Vault")
+    s.updateFolder(vault) { $0.locked = true }
+    s.save()
+    #expect(try run(["read", "my_notes bold"]).out.hasPrefix("# my_notes"))       // titles as the app makes them
+    #expect(try run(["read", "Budget"]).err.contains("Did you mean: “Budget Plan”"))  // no guessing at a different note
+    #expect(try run(["new", "x", "--folder", "vault"]).err.contains("locked"))      // refused here: the app can't answer back
     let found = try run(["search", "plan"]).out
     #expect(found.contains("Budget Plan  —  Work") && !found.contains("Secret"))
     #expect(try run(["read", "budget plan"]).out.hasPrefix("# Budget Plan\nrent 12,000"))
@@ -2181,10 +2188,13 @@ private func pngFile(in dir: URL) throws -> String {
         #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_notes","arguments":{"query":"rent"}}}"#,
         ##"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"create_note","arguments":{"text":"# From an agent","folder":"AI"}}}"##,
         #"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"read_note","arguments":{"title":"Secret plan"}}}"#,
+        "this is not json",
+        #"{"jsonrpc":"2.0","id":9}"#,
     ].joined(separator: "\n") + "\n"
     let (out, err) = try run(["mcp"], input: requests)
     let replies = out.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
-    #expect(replies.map { $0["id"] as? Int } == [1, 2, 3, 4, 5]) // nothing for the notification
+    #expect(replies.prefix(5).map { $0["id"] as? Int } == [1, 2, 3, 4, 5]) // nothing for the notification
+    #expect((replies[5]["error"] as? [String: Any])?["code"] as? Int == -32700 && (replies[6]["error"] as? [String: Any])?["code"] as? Int == -32600)
     #expect(((replies[0]["result"] as? [String: Any])?["serverInfo"] as? [String: Any])?["name"] as? String == "cortexy")
     #expect(((replies[1]["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.count == 5)
     func text(_ r: [String: Any]) -> String { (((r["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "" }
@@ -2198,10 +2208,12 @@ private func pngFile(in dir: URL) throws -> String {
 @MainActor @Test func checkedItemsSinkAndClear() throws {
     let list = "Shop\n- [ ] milk\n- [ ] eggs\n- [x] bread\nafter"
     #expect(MD.toggleTask(in: list, line: 1, sink: true) == "Shop\n- [ ] eggs\n- [x] milk\n- [x] bread\nafter")
-    #expect(MD.toggleTask(in: "- [ ] b\n- [x] a\n- [x] c", line: 2, sink: true) == "- [ ] b\n- [ ] c\n- [x] a") // unticked: back above the ticked
+    #expect(MD.toggleTask(in: "T\n- [ ] b\n- [x] a\n- [x] c", line: 3, sink: true) == "T\n- [ ] b\n- [ ] c\n- [x] a") // unticked: back above the ticked
+    #expect(MD.toggleTask(in: "- [ ] milk\n- [ ] eggs", line: 0, sink: true) == "- [x] milk\n- [ ] eggs") // the title line: stays (or the note's renamed)
     #expect(MD.toggleTask(in: list, line: 1) == "Shop\n- [x] milk\n- [ ] eggs\n- [x] bread\nafter")                // setting off: stays
     #expect(MD.toggleTask(in: "- [ ] a\n  - sub\n- [ ] b", line: 0, sink: true) == "- [x] a\n  - sub\n- [ ] b")     // has sub-items: stays
     #expect(MD.removingDone("- [x] a\n  - note on a\n- [ ] b\n- [-] c\ntext") == "- [ ] b\ntext")
+    #expect(MD.removingDone("- [x] P\n  - [ ] still open\n```\n- [x] sample\n```") == "  - [ ] still open\n```\n- [x] sample\n```")
 
     let s = Store(testing: tempDir()), nav = Nav(store: s)
     let n = s.addNote(to: Folder.rootID, text: "- [x] done\n- [ ] todo")!
@@ -2242,6 +2254,56 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(nav.shownSearch == "wel")
     nav.search = ""
     #expect(nav.shownSearch.isEmpty)               // cleared: at once
+}
+
+/// Regressions from the second review (0.10.2–0.12).
+@MainActor @Test func secondReviewRegressions() async throws {
+    await PanelGate.enter() // it makes a PanelController (the shared one): not alongside the panel and preview tests
+    defer { PanelGate.leave() }
+    #expect(MD.wikiLinks("[see [[Note]]](https://x.y) and [[Notes [v2]]]") == ["Note", "Notes [v2]"])
+
+    // A quiet new note (CLI, AI agents) goes home, not into a locked folder the panel was left on; append too.
+    let s = Store(testing: tempDir())
+    let c = PanelController(store: s)
+    let vault = s.addFolder("Vault")
+    s.updateFolder(vault) { $0.locked = true }
+    c.nav.route = .folder(vault)
+    c.handle(URL(string: "cortexy://new?text=%23%20From%20agent&show=0")!)
+    #expect(s.folder(Folder.rootID)!.notes.contains { $0.title == "From agent" } && s.folder(vault)!.notes.isEmpty)
+    #expect(c.nav.append("x", to: "Brand new title") && s.folder(Folder.rootID)!.notes.contains { $0.title == "Brand new title" })
+
+    // Each asker keeps its own room: the suggestion list ending doesn't shrink an open overlay's.
+    c.needs(atLeast: 480)
+    c.needs(atLeast: 440, for: "suggestions")
+    c.needs(atLeast: 0, for: "suggestions")
+    c.needs(atLeast: 0)
+
+    // Deleting a name's line updates the sum that used it.
+    let h = EditorHarness(dir: tempDir())
+    h.tv.load("rent = 12,000\n\nrent * 2 =")
+    h.tv.setSelectedRange(NSRange(location: 0, length: 0))
+    h.tv.restyle(force: true)
+    func sum() -> String? {
+        let eq = (h.tv.string as NSString).range(of: "2 =").location + 2
+        return h.tv.textStorage!.attribute(.cxMarker, at: eq, effectiveRange: nil) as? String
+    }
+    #expect(sum() == "sum:24,000")
+    h.tv.setSelectedRange(NSRange(location: 0, length: 13))
+    h.tv.insertText("", replacementRange: h.tv.selectedRange())
+    h.tv.restyle()
+    #expect(sum() == nil) // no "rent" any more: no result
+
+    // Ticking a task keeps the caret in its own line while the list reorders.
+    h.tv.load("Shop\n- [ ] milk\n- [ ] eggs\n- [ ] bread")
+    let bread = (h.tv.string as NSString).range(of: "bread").location
+    h.tv.setSelectedRange(NSRange(location: bread + 2, length: 0))
+    let box = (h.tv.string as NSString).range(of: "[ ] milk").location + 1
+    h.tv.setSelectedRange(NSRange(location: bread + 2, length: 0))
+    h.tv.textStorage!.replaceCharacters(in: NSRange(location: box, length: 1), with: "x")
+    h.tv.setSelectedRange(NSRange(location: bread + 2, length: 0))
+    h.tv.sinkTask(at: box)
+    #expect(h.tv.markdown() == "Shop\n- [ ] eggs\n- [ ] bread\n- [x] milk")
+    #expect((h.tv.string as NSString).paragraphRange(for: h.tv.selectedRange()).location == (h.tv.string as NSString).range(of: "- [ ] bread").location)
 }
 
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
