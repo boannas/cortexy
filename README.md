@@ -12,7 +12,9 @@
 ./build.sh test      # รันเทสต์
 ```
 
-ทดสอบด้วยมือทีละฟีเจอร์ (ใช้ยังไง ควรเห็นอะไร): [TESTING.md](TESTING.md)
+ทดสอบด้วยมือทีละฟีเจอร์ (ใช้ยังไง ควรเห็นอะไร): [TESTING.md](TESTING.md) ·
+วัดความลื่น (hitch ms ต่อวินาที, จอต้องเปิดอยู่และไม่ล็อก): `tools/smooth/tour.sh [scenario]` หรือเทียบเวอร์ชันเก่า `REF=v0.2.1 tools/smooth/tour.sh typing` ·
+แผนย้ายไป Xcode: [XCODE_PLAN.md](XCODE_PLAN.md)
 
 แอปเซ็นแบบ ad-hoc (build บนเครื่องตัวเองจึงเปิดได้เลย)
 
