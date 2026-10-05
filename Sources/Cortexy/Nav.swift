@@ -625,10 +625,14 @@ import UniformTypeIdentifiers
 
     /// The note a `[[title]]` means: one in the open folder first, else the newest with that title.
     /// A title beats an alias (`aliases:` in a note's frontmatter).
-    func resolve(title: String) -> (UUID, Note)? {
+    /// `from`: the note the link is in. It never means itself while another note has the title: a note that
+    /// starts with `[[Target]]` is called "Target" too (its first line is its title).
+    func resolve(title: String, from source: UUID? = nil) -> (UUID, Note)? {
         let t = title.trimmingCharacters(in: .whitespaces)
         func best(_ named: (Note) -> Bool) -> (UUID, Note)? {
-            store.liveFolders.flatMap { f in f.notes.filter(named).map { (f.id, $0) } }
+            let all = store.liveFolders.flatMap { f in f.notes.filter(named).map { (f.id, $0) } }
+            let others = all.filter { $0.1.id != source }
+            return (others.isEmpty ? all : others)
                 .max { a, b in a.0 == currentFolder ? false : b.0 == currentFolder ? true : a.1.modified < b.1.modified }
         }
         return best { $0.title.localizedCaseInsensitiveCompare(t) == .orderedSame }
@@ -744,7 +748,9 @@ import UniformTypeIdentifiers
     }
 
     /// `cortexy://tag/x` searches the tag; `cortexy://open?title=T` opens that note, creating it if there's none.
-    @discardableResult func openLink(_ url: URL) -> Bool {
+    /// `from`: the note the link was clicked in (the open note when not said).
+    @discardableResult func openLink(_ url: URL, from: UUID? = nil) -> Bool {
+        let source = from ?? routeNote
         guard url.scheme == "cortexy" else { return false }
         switch url.host {
         case "footnote":
@@ -759,7 +765,7 @@ import UniformTypeIdentifiers
             search = ""
             // What follows # is a heading or a block (^id), unless the whole is a note's title ("C# tips").
             var (name, heading, block) = (title, String?.none, String?.none)
-            if title.contains("#"), resolve(title: title) == nil, lockedAwayNote(titled: title) == nil {
+            if title.contains("#"), resolve(title: title, from: source) == nil, lockedAwayNote(titled: title) == nil {
                 (name, heading, block) = MD.splitLink(title)
             }
             func reveal(_ n: Note) {
@@ -769,7 +775,7 @@ import UniformTypeIdentifiers
             if name.isEmpty { // [[#Heading]]: in this note
                 if case .note(let fid, let id) = route, let n = store.note(fid, id) { reveal(n) }
             }
-            else if let (fid, n) = resolve(title: name) { route = .note(fid, n.id); reveal(n) }
+            else if let (fid, n) = resolve(title: name, from: source) { route = .note(fid, n.id); reveal(n) }
             else if let (fid, n) = lockedAwayNote(titled: name) { // there, behind its folder's lock: ask to open it, don't make a copy
                 let door = store.chain(fid).first { $0.locked && !store.openFolders.contains($0.id) }?.id ?? fid
                 unlockFolder(door) { [self] in activate(fid, n) }

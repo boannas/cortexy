@@ -273,7 +273,7 @@ final class PanelController: NSObject {
         let item: PreviewModel.Item
         if url.scheme == "cortexy", url.host == "open",
            let title = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "title" })?.value {
-            guard let (_, n) = nav.resolve(title: title) ?? nav.resolve(title: MD.splitLink(title).title) else { return }
+            guard let (_, n) = nav.resolve(title: title, from: tv.noteID) ?? nav.resolve(title: MD.splitLink(title).title, from: tv.noteID) else { return }
             item = .note(n.id)
         } else if ["http", "https"].contains(url.scheme ?? ""), LinkPreviews.enabled {
             item = .web(url)

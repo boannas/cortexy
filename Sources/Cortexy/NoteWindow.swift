@@ -92,7 +92,7 @@ struct NoteWindowView: View {
                     store.type(f.id, nid) { $0.text = t; $0.modified = Date() }
                     nav.edited(nid)
                 }
-            ), style: Self.style(n), store: store, onLink: { nav.openLink($0) },
+            ), style: Self.style(n), store: store, onLink: { nav.openLink($0, from: nid) },
                complete: { kind, partial in nav.suggestions(kind, partial, excluding: nid) }, caretKey: nid)
             .padding(.top, 26) // under the title bar
             .safeAreaInset(edge: .bottom) {

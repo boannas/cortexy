@@ -457,7 +457,7 @@ struct EditorView: View {
                     nav.store.type(fid, nid) { $0.text = t; $0.modified = Date() }
                     nav.edited(nid)
                 }
-            ), style: style, store: nav.store, onLink: { nav.openLink($0) },
+            ), style: style, store: nav.store, onLink: { nav.openLink($0, from: nid) },
                complete: { kind, partial in nav.suggestions(kind, partial, excluding: nid) }, caretKey: nid,
                onFit: { [page] content, room in if nav.page == page { nav.panel?.grow(content: content, container: room) } },
                measureTick: nav.measureTick)

@@ -2090,6 +2090,23 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(store.folders.filter { $0.name == "Daily" }.count == 1)
 }
 
+/// A note that starts with `[[Target]]` is called "Target" too (its first line is its title); its link must still
+/// go to the other note, not to itself (it used to: the preview showed the note itself and a click went nowhere).
+@MainActor @Test func aLinkNeverMeansItsOwnNote() {
+    let s = Store(testing: tempDir())
+    let nav = Nav(store: s)
+    let target = s.addNote(to: Folder.rootID, text: "# 2026 September 30 - P'Ohm\nnotes from the meeting")!
+    let fresh = s.addNote(to: Folder.rootID, text: "[[2026 September 30 - P'Ohm]]\n[[")!
+    #expect(s.note(Folder.rootID, fresh)!.title == "2026 September 30 - P'Ohm")
+    nav.route = .note(Folder.rootID, fresh)
+    #expect(nav.resolve(title: "2026 September 30 - P'Ohm", from: fresh)?.1.id == target)
+    nav.openLink(Link.note("2026 September 30 - P'Ohm"), from: fresh)
+    #expect(nav.route == .note(Folder.rootID, target))
+    nav.route = .note(Folder.rootID, fresh)
+    nav.openLink(Link.note("2026 September 30 - P'Ohm")) // from the open note when not said
+    #expect(nav.route == .note(Folder.rootID, target))
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {
