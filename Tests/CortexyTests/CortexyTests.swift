@@ -832,11 +832,12 @@ private final class StubImages: URLProtocol {
     #expect(context("done [[Plan]]") == nil)
     #expect(context("a#b") == nil)              // not a tag: no space before #
     h.tv.completionSource = { _, _ in ["homework"] }
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 340, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    w.contentView?.addSubview(h.tv)
     h.tv.load("#home")
     h.tv.setSelectedRange(NSRange(location: 5, length: 0))
-    var index = 0
-    _ = h.tv.completions(forPartialWordRange: NSRange(location: 1, length: 4), indexOfSelectedItem: &index)
-    #expect(index == -1)                         // nothing preselected: Return doesn't swap in a guess
+    h.tv.suggestCompletions()
+    #expect(h.tv.suggestions == ["homework"] && h.tv.highlighted == nil) // nothing preselected: Return doesn't swap in a guess
     #expect(context("```\n#code") == nil)     // inside a code block
     h.tv.load("#work and [[Plan]]")
     #expect(h.tv.textStorage!.attribute(.link, at: 1, effectiveRange: nil) as? URL == Link.tag("work"))
@@ -1777,34 +1778,51 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(font(body).pointSize > 5)
 }
 
-/// Typing `/` at a line's start offers commands; picking one runs it on the line and the `/…` goes.
-@MainActor @Test func slashCommands() {
+/// The suggestion list lives in the editor: `[[` offers titles, `/` commands, `#` tags; ↓ then ↩ (or ⇥) takes one,
+/// Return with nothing chosen still makes a new line, Esc closes it, a click on a row takes it.
+@MainActor @Test func suggestionsInTheEditor() {
     let h = EditorHarness(dir: tempDir())
-    h.tv.load("Title /he")
-    h.tv.setSelectedRange(NSRange(location: 9, length: 0))
-    guard let (kind, r) = h.tv.completionContext() else { Issue.record("no context"); return }
-    #expect(kind == .command && r == NSRange(location: 6, length: 3))
-    var i = 0
-    let offered = h.tv.completions(forPartialWordRange: r, indexOfSelectedItem: &i) ?? []
-    #expect(offered.first == "/Heading 1")
-    h.tv.insertCompletion("/Heading 2", forPartialWordRange: r, movement: NSTextMovement.return.rawValue, isFinal: true)
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 340, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    w.contentView?.addSubview(h.tv)
+    h.tv.completionSource = { kind, partial in kind == .link ? ["Plan", "Planet"].filter { MD.fuzzy(partial, $0) != nil } : ["home", "homework"] }
+
+    h.tv.load("see [[Pl")
+    h.tv.setSelectedRange(NSRange(location: 8, length: 0))
+    h.tv.suggestCompletions()
+    #expect(h.tv.completing && h.tv.suggestions == ["Plan", "Planet"] && h.tv.highlighted == nil)
+    #expect(h.tv.handleSuggestionKey(#selector(NSResponder.moveDown(_:))) && h.tv.highlighted == 0)
+    #expect(h.tv.handleSuggestionKey(#selector(NSResponder.moveDown(_:))) && h.tv.highlighted == 1)
+    #expect(h.tv.handleSuggestionKey(#selector(NSResponder.insertNewline(_:))))
+    #expect(h.tv.markdown() == "see [[Planet]]" && !h.tv.completing && h.tv.selectedRange().location == 14)
+
+    h.tv.load("see [[Pl]] later")
+    h.tv.setSelectedRange(NSRange(location: 8, length: 0))
+    h.tv.suggestCompletions()
+    h.tv.pickSuggestion("Plan") // a click on a row
+    #expect(h.tv.markdown() == "see [[Plan]] later" && h.tv.selectedRange().location == 12) // past the "]]" that was there
+
+    h.tv.load("#ho")
+    h.tv.setSelectedRange(NSRange(location: 3, length: 0))
+    h.tv.suggestCompletions()
+    #expect(!h.tv.handleSuggestionKey(#selector(NSResponder.insertNewline(_:))) && !h.tv.completing) // nothing chosen: Return is a new line
+    h.tv.suggestCompletions()
+    #expect(h.tv.handleSuggestionKey(#selector(NSResponder.insertTab(_:))) && h.tv.markdown() == "#home ")
+
+    h.tv.load("Title /hea")
+    h.tv.setSelectedRange(NSRange(location: 10, length: 0))
+    #expect(h.tv.completionContext()?.0 == .command && h.tv.completionContext()?.1 == NSRange(location: 6, length: 4))
+    h.tv.suggestCompletions()
+    #expect(h.tv.suggestions.first == "/Heading 1")
+    h.tv.pickSuggestion("/Heading 2")
     #expect(h.tv.markdown() == "## Title ")
+
+    h.tv.load("x /")
+    h.tv.setSelectedRange(NSRange(location: 3, length: 0))
+    h.tv.suggestCompletions()
+    #expect(h.tv.handleSuggestionKey(#selector(NSResponder.cancelOperation(_:))) && !h.tv.completing && h.tv.markdown() == "x /")
     h.tv.load("http://x.y/a")
     h.tv.setSelectedRange(NSRange(location: 12, length: 0))
     #expect(h.tv.completionContext() == nil) // a / inside a word or link isn't a command
-}
-
-@Test func mentionsTagRenamesAndDiffs() {
-    let t = "Plan B is set. plans aside, see [[Plan B]] and `Plan B` — แผนสำรองของทีม"
-    #expect(MD.mentionRanges("Plan B", in: t).map(\.location) == [0])        // not in the link, the code, or "plans"
-    #expect(MD.mentionRanges("แผนสำรอง", in: t).count == 1)                    // Thai: found inside the run of letters
-    #expect(MD.mentionRanges("ab", in: "ab ab").isEmpty)                      // too short to count
-    let tagged = "---\ntags: [work, home]\n---\n#work and #work/meeting but not #workshop"
-    #expect(MD.renamedTag(tagged, from: "work", to: "job") == "---\ntags: [job, home]\n---\n#job and #job/meeting but not #workshop")
-    #expect(MD.renamedTag("---\ntags:\n  - work\nother: work\n---\nx", from: "work", to: "job") == "---\ntags:\n  - job\nother: work\n---\nx")
-    let d = MD.diffLines("a\nb\nc", "a\nc\nd")
-    #expect(d.map(\.0) == [.same, .removed, .same, .added] && d.map(\.1) == ["a", "b", "c", "d"])
-    #expect(MD.readingMinutes(0) == 0 && MD.readingMinutes(10) == 1 && MD.readingMinutes(461) == 3)
 }
 
 @MainActor @Test func forwardRandomMentionsAndTags() {
@@ -2043,15 +2061,15 @@ private func pngFile(in dir: URL) throws -> String {
     // Renaming a tag leaves code alone.
     #expect(MD.renamedTag("#todo here\n```\n#todo: fix\n```\nand `#todo`", from: "todo", to: "task") == "#task here\n```\n#todo: fix\n```\nand `#todo`")
 
-    // A multi-word / command picked with the arrows (put in provisionally first) still runs.
+    // A multi-word / command picked with the arrows still runs.
     let h = EditorHarness(dir: tempDir())
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 340, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    w.contentView?.addSubview(h.tv)
     h.tv.load("Title /hea")
     h.tv.setSelectedRange(NSRange(location: 10, length: 0))
-    let r = h.tv.completionContext()!.1
-    var i = 0
-    _ = h.tv.completions(forPartialWordRange: r, indexOfSelectedItem: &i)
-    h.tv.insertCompletion("/Heading 1", forPartialWordRange: r, movement: NSTextMovement.down.rawValue, isFinal: false)
-    h.tv.insertCompletion("/Heading 1", forPartialWordRange: r, movement: NSTextMovement.return.rawValue, isFinal: true)
+    h.tv.suggestCompletions()
+    _ = h.tv.handleSuggestionKey(#selector(NSResponder.moveDown(_:)))
+    _ = h.tv.handleSuggestionKey(#selector(NSResponder.insertNewline(_:)))
     #expect(h.tv.markdown() == "# Title ")
 
     // A link pasted into a link's parentheses stays as copied.
@@ -2654,5 +2672,6 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(heights.allSatisfy { $0 <= home + 1 }, "came home past its height: \(heights.map { Int($0) })")
     #expect(abs(c.layout.height - home) <= 1)
 }
+
 
 

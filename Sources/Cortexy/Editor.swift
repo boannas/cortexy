@@ -713,8 +713,7 @@ final class MarkdownTextView: NSTextView {
     enum Completion { case link, tag, command }
     /// Suggestions for what's typed after `[[` (note titles) or `#` (tags).
     var completionSource: (Completion, String) -> [String] = { _, _ in [] }
-    private(set) var completing = false // the suggestion list is up; Esc belongs to it
-    private var offered: [String] = []
+    private(set) var completing = false // the suggestion list is up; the arrows, Return, Tab and Esc belong to it
     private var dirty: NSRange?    // edited since the last restyle
     private var unconverted: NSRange? // edited since the last look for typed attachments
     private var fenceCount = 0, metaLines = 0
@@ -1075,6 +1074,16 @@ final class MarkdownTextView: NSTextView {
         return img
     }
     private static var markerImages: [String: NSImage] = [:]
+
+    override func resignFirstResponder() -> Bool {
+        // Focus gone elsewhere: the list goes (a beat later, so a click on one of its rows still lands).
+        DispatchQueue.main.async { [weak self] in
+            guard let self, window?.firstResponder !== self else { return }
+            if let box = suggestionBox, let r = window?.firstResponder as? NSView, r.isDescendant(of: box) { return }
+            hideSuggestions()
+        }
+        return super.resignFirstResponder()
+    }
 
     /// The first click on a panel that isn't focused yet (opened by the pointer) places the caret right away,
     /// instead of only focusing the panel and leaving the caret where it was.
@@ -1493,8 +1502,6 @@ final class MarkdownTextView: NSTextView {
 
     /// `/` at a line's start or after a space, then what's typed: the command menu.
     private static let slashTail = try! NSRegularExpression(pattern: #"(?:^|(?<=\s))/[\p{L}\p{N}]*$"#)
-    /// What the completion list on show was made for.
-    private var offeredKind: Completion?
     /// The `/` menu: what each command is called, and the editing action it runs.
     static let commands: [(title: String, action: String)] = [
         ("Heading 1", "cxHeading1:"), ("Heading 2", "cxHeading2:"), ("Heading 3", "cxHeading3:"), ("Bullet List", "cxBullet:"),
@@ -1511,57 +1518,103 @@ final class MarkdownTextView: NSTextView {
         return Self.commands.compactMap { c in MD.fuzzy(typed, c.title).map { ("/" + c.title, $0) } }.sorted { $0.1 > $1.1 }.map(\.0)
     }
 
-    /// Called after each edit: opens the suggestion list when there's something to suggest.
+    // MARK: The suggestion list
+    //
+    // Drawn inside the editor, under the caret. (NSTextView's own completion list is a window of its own: from the
+    // panel, which doesn't make Cortexy the active app, it often didn't show, and clicking it took the focus away.)
+
+    private var suggestionBox: FirstMouseHostingView<SuggestionList>?
+    /// What the list shows, what it was made for, the text it replaces, and the row picked with the arrows (nil:
+    /// none yet, so Return still makes a new line: typing #home then Return keeps "#home", not #homework).
+    private(set) var suggestions: [String] = []
+    private var suggestionKind: Completion?
+    private var suggestionRange = NSRange(location: NSNotFound, length: 0)
+    private(set) var highlighted: Int?
+    var suggestionRangeStart: Int { suggestionRange.location }
+
+    /// After each edit: shows the list when what's being typed has suggestions, and hides it when not.
     func suggestCompletions() {
-        guard !completing, !hasMarkedText(), window != nil, let (kind, r) = completionContext() else { return }
+        guard !hasMarkedText(), window != nil, let (kind, r) = completionContext() else { return hideSuggestions() }
         let partial = (string as NSString).substring(with: r)
-        if kind == .tag && partial.isEmpty { return }
-        let options = options(kind, partial)
-        guard !options.isEmpty, options != [partial] else { return }
+        let options = (kind == .tag && partial.isEmpty) ? [] : options(kind, partial)
+        guard !options.isEmpty, options != [partial] else { return hideSuggestions() }
+        if options != suggestions || kind != suggestionKind { highlighted = nil }
+        suggestions = Array(options.prefix(12))
+        suggestionKind = kind
+        suggestionRange = r
         completing = true
-        complete(nil)
-        if window?.firstResponder !== self || !completing { completing = false }
+        showSuggestions()
     }
 
-    override var rangeForUserCompletion: NSRange { completionContext()?.1 ?? super.rangeForUserCompletion }
-
-    override func completions(forPartialWordRange r: NSRange, indexOfSelectedItem i: UnsafeMutablePointer<Int>) -> [String]? {
-        guard let (kind, _) = completionContext() else { return super.completions(forPartialWordRange: r, indexOfSelectedItem: i) }
-        i.pointee = -1 // nothing picked until ↓: typing #home then Return keeps "#home", it doesn't become #homework
-        offered = options(kind, (string as NSString).substring(with: r))
-        offeredKind = kind
-        return offered
+    func hideSuggestions() {
+        guard completing || suggestionBox?.isHidden == false else { return }
+        completing = false
+        suggestions = []
+        highlighted = nil
+        suggestionBox?.isHidden = true
     }
 
-    /// A picked suggestion is finished off: `]]` after a title, a space after a tag (Thai has no other word break).
-    override func insertCompletion(_ word: String, forPartialWordRange r: NSRange, movement: Int, isFinal: Bool) {
-        var word = word
-        let picked = offered.contains(word)
-        // Decided on what was offered, not on the text: arrowing to "/Heading 1" puts it in provisionally, and its
-        // space no longer reads as a command being typed.
-        if isFinal, picked, movement != NSTextMovement.cancel.rawValue, offeredKind == .command,
-           let c = Self.commands.first(where: { "/" + $0.title == word }) {
-            // A command: the completion ends as usual (the command's name in place of what was typed), then that
-            // name goes and the command runs on the line.
-            completing = false
-            super.insertCompletion(word, forPartialWordRange: r, movement: movement, isFinal: true)
-            let typed = NSRange(location: r.location, length: (word as NSString).length)
-            if NSMaxRange(typed) <= (string as NSString).length, (string as NSString).substring(with: typed) == word { replace(typed, with: "") }
+    private func showSuggestions() {
+        let list = SuggestionList(items: suggestions, highlighted: highlighted, kind: suggestionKind ?? .link) { [weak self] in self?.pickSuggestion($0) }
+        let box = suggestionBox ?? {
+            let v = FirstMouseHostingView(rootView: list)
+            addSubview(v)
+            suggestionBox = v
+            return v
+        }()
+        box.rootView = list
+        box.frame.size = box.fittingSize
+        // Under the caret's line; above it when there's no room below.
+        guard let lm = layoutManager, let tc = textContainer else { return }
+        let caret = min(selectedRange().location, (string as NSString).length)
+        var at = NSRect(x: 0, y: 0, width: 0, height: style.lineHeight) // the caret, in the text container
+        if lm.numberOfGlyphs > 0 {
+            let r = lm.boundingRect(forGlyphRange: NSRange(location: lm.glyphIndexForCharacter(at: max(0, caret - 1)), length: 1), in: tc)
+            at = NSRect(x: caret > 0 ? r.maxX : r.minX, y: r.minY, width: 0, height: r.height)
+        }
+        at = at.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        let size = box.frame.size
+        var y = at.maxY + 2
+        if y + size.height > visibleRect.maxY, at.minY - size.height - 2 > visibleRect.minY { y = at.minY - size.height - 2 }
+        box.frame.origin = NSPoint(x: min(max(visibleRect.minX + 4, at.minX - 12), visibleRect.maxX - size.width - 4), y: y)
+        box.isHidden = false
+    }
+
+    /// ↑ ↓ move along the list, ↩ or ⇥ take the row (⇥ the first one if none is picked), Esc closes it. Anything
+    /// else goes on to the editor. Returns whether the key was the list's.
+    func handleSuggestionKey(_ sel: Selector) -> Bool {
+        guard completing, !suggestions.isEmpty else { return false }
+        switch sel {
+        case #selector(moveDown(_:)): highlighted = min((highlighted ?? -1) + 1, suggestions.count - 1)
+        case #selector(moveUp(_:)): highlighted = max((highlighted ?? suggestions.count) - 1, 0)
+        case #selector(insertTab(_:)): pickSuggestion(suggestions[highlighted ?? 0]); return true
+        case #selector(insertNewline(_:)):
+            guard let h = highlighted else { hideSuggestions(); return false } // nothing picked: the new line it was pressed for
+            pickSuggestion(suggestions[h]); return true
+        case #selector(cancelOperation(_:)): hideSuggestions(); return true
+        default: return false
+        }
+        showSuggestions()
+        return true
+    }
+
+    /// A suggestion taken: in place of what was typed, finished off with `]]` after a title and a space after a
+    /// tag (Thai has no other word break). A `/` command takes its typed name away and runs on the line.
+    func pickSuggestion(_ word: String) {
+        guard let kind = suggestionKind, NSMaxRange(suggestionRange) <= (string as NSString).length else { return hideSuggestions() }
+        let r = suggestionRange
+        hideSuggestions()
+        if kind == .command, let c = Self.commands.first(where: { "/" + $0.title == word }) {
+            replace(r, with: "", select: NSRange(location: r.location, length: 0))
             NSApp.sendAction(Selector(c.action), to: self, from: self)
             return
         }
-        if isFinal {
-            let kind = completionContext()?.0
-            completing = false
-            if movement != NSTextMovement.cancel.rawValue, picked {
-                let rest = (string as NSString).substring(from: min(NSMaxRange(r), (string as NSString).length))
-                if kind == .link && !rest.hasPrefix("]]") { word += "]]" }
-                if kind == .tag && !rest.hasPrefix(" ") { word += " " }
-            }
-        }
-        super.insertCompletion(word, forPartialWordRange: r, movement: movement, isFinal: isFinal)
-        // Return with nothing picked closes the list and still makes the new line it was pressed for.
-        if isFinal, movement == NSTextMovement.return.rawValue, !picked { doCommand(by: #selector(insertNewline(_:))) }
+        let rest = (string as NSString).substring(from: NSMaxRange(r))
+        var text = word
+        var after = 0 // past the "]]" that was there already
+        if kind == .link { if rest.hasPrefix("]]") { after = 2 } else { text += "]]" } }
+        if kind == .tag, !rest.hasPrefix(" ") { text += " " }
+        replace(r, with: text, select: NSRange(location: r.location + (text as NSString).length + after, length: 0))
     }
 
     /// Puts the caret at the first `text` (ignoring case and accents) and flashes it, after opening from a search.
@@ -2168,13 +2221,16 @@ struct MarkdownEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ n: Notification) {
             guard let tv = n.object as? MarkdownTextView else { return }
             tv.restyle()
+            tv.caretMovedForSuggestions()
             // Only while it's on screen: an editor being taken away (the note left) moves its caret too, and that
             // overwrote where you'd been, so the note reopened somewhere else.
             if let key = parent.caretKey, tv.window != nil { MarkdownEditor.carets[key] = tv.selectedRange().location }
         }
 
         func textView(_ textView: NSTextView, doCommandBy sel: Selector) -> Bool {
-            sel == #selector(NSResponder.insertNewline(_:)) && (textView as? MarkdownTextView)?.continueList() == true
+            guard let tv = textView as? MarkdownTextView else { return false }
+            if tv.handleSuggestionKey(sel) { return true }
+            return sel == #selector(NSResponder.insertNewline(_:)) && tv.continueList()
         }
 
         /// Typing right after an attachment must not inherit its attachment attributes.
@@ -2245,5 +2301,48 @@ struct SelectionBar: View {
         .padding(.horizontal, 4)
         .glassEffect(.regular, in: .capsule)
         .padding(2)
+    }
+}
+
+extension MarkdownTextView {
+    /// The caret went elsewhere (a click, ←/→): the list goes unless it's still in what's being typed.
+    func caretMovedForSuggestions() {
+        guard completing else { return }
+        guard let (_, r) = completionContext(), r.location == suggestionRangeStart else { return hideSuggestions() }
+    }
+}
+
+/// The suggestions under the caret: note titles after `[[`, tags after `#`, commands after `/`.
+struct SuggestionList: View {
+    let items: [String]
+    let highlighted: Int?
+    let kind: MarkdownTextView.Completion
+    let pick: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(items.enumerated()), id: \.offset) { i, item in
+                Button { pick(item) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: kind == .link ? "doc.text" : kind == .tag ? "number" : "command").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 14)
+                        Text(kind == .tag ? "#" + item : item).font(.system(size: 13)).lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(i == highlighted ? Color.cortexyAccent.opacity(0.25) : .clear))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            if highlighted == nil {
+                Text("↓ to choose · ⇥ takes the first").font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.top, 2)
+            }
+        }
+        .padding(4)
+        .frame(width: 250, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.primary.opacity(0.1)))
+        .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
     }
 }
