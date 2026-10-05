@@ -2329,6 +2329,13 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(st.attribute(.attachment, at: 6, effectiveRange: nil) != nil)
     #expect(st.attribute(.cxOpen, at: 6, effectiveRange: nil) as? URL == Link.note("Plan#Budget"))
     #expect(h.tv.markdown() == md) // still ![[…]] in the note
+    // Typed (or picked from the suggestions): shown as soon as the line is whole, not after reopening the note.
+    h.tv.load("Notes\n")
+    h.tv.setSelectedRange(NSRange(location: 6, length: 0))
+    for ch in "![[Plan]]" { h.tv.insertText(String(ch), replacementRange: h.tv.selectedRange()) }
+    #expect(st.attribute(.attachment, at: 6, effectiveRange: nil) != nil)
+    #expect(h.tv.markdown() == "Notes\n![[Plan]]")
+    #expect(h.tv.selectedRange().location == 7) // the caret after the card
     h.tv.noteID = planID
     h.tv.load("![[Plan]]")
     #expect(st.attribute(.attachment, at: 0, effectiveRange: nil) == nil) // itself: left as typed
@@ -2380,6 +2387,29 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(!fm.fileExists(atPath: out.appendingPathComponent("Work/x:y.md").path))   // now written as its note's name…
     #expect(fm.fileExists(atPath: out.appendingPathComponent("Work/x-y.md").path))    // …here
     #expect(Store.scanMirror(out).isEmpty)                                            // and nothing comes back twice
+
+    // Renamed in Obsidian: the same note, renamed (title line too), not trashed and made again; moved to
+    // another folder: the same note, moved.
+    let pinned = s.addNote(to: work, text: "---\ntags: [a]\n---\n## Draft\nbody")!
+    push()
+    try fm.moveItem(at: out.appendingPathComponent("Work/Draft.md"), to: out.appendingPathComponent("Work/Final draft.md"))
+    try fm.createDirectory(at: out.appendingPathComponent("Archive"), withIntermediateDirectories: true)
+    try fm.moveItem(at: out.appendingPathComponent("Work/Plan.md"), to: out.appendingPathComponent("Archive/Plan.md"))
+    let moves = Store.scanMirror(out)
+    #expect(moves.moved.count == 2 && moves.added.isEmpty && moves.removed.isEmpty)
+    _ = s.applyMirror(moves, from: out)
+    #expect(s.note(work, pinned)?.text == "---\ntags: [a]\n---\n## Final draft\nbody")
+    let archive = try #require(s.subfolders(Folder.rootID).first { $0.name == "Archive" })
+    #expect(s.note(archive.id, plan)?.text == "# Plan\nedited in Obsidian")
+    push()
+    #expect(Store.scanMirror(out).isEmpty)
+    #expect(Store.readManifest(out)["Work/Final draft.md"]?.id == pinned && Store.readManifest(out)["Archive/Plan.md"]?.id == plan)
+    // An image pasted in Obsidian sits at the top of the vault, the note in a folder: it still comes in.
+    let img = tempDir()
+    try fm.copyItem(at: img.appendingPathComponent(try pngFile(in: img)), to: out.appendingPathComponent("Pasted image 1.png"))
+    try write("Work/Final draft.md", "---\ntags: [a]\n---\n## Final draft\n![[Pasted image 1.png]]")
+    _ = s.applyMirror(Store.scanMirror(out), from: out)
+    #expect(s.note(work, pinned)?.text.contains("](attachments/") == true)
 
     // A manifest from before two-way still reads.
     try JSONEncoder().encode(["A.md": "abc"]).write(to: out.appendingPathComponent(Store.mirrorManifest))

@@ -156,7 +156,7 @@ final class MarkdownTextView: NSTextView {
         return out
     }
 
-    /// Turns freshly typed or pasted `![](…)`/file links into attachments, undoably, keeping the caret in place.
+    /// Turns freshly typed or pasted `![](…)`, file links and `![[Note]]` lines into attachments, undoably, keeping the caret in place.
     func convertTypedAttachments() {
         guard !converting, !hasMarkedText(), let st = textStorage, let edited = unconverted,
               undoManager?.isUndoing != true, undoManager?.isRedoing != true else { return }
@@ -165,7 +165,7 @@ final class MarkdownTextView: NSTextView {
         let full = NSRange(location: 0, length: plain.length)
         // Only the paragraphs just typed in: elsewhere links were converted already, or can't be (web, missing files).
         let scope = Styler.paragraphs(plain, edited)
-        guard MD.imageRegex.firstMatch(in: st.string, range: scope) != nil || MD.fileLinkRegex.firstMatch(in: st.string, range: scope) != nil else { return }
+        guard [MD.imageRegex, MD.fileLinkRegex, MD.embedRegex].contains(where: { $0.firstMatch(in: st.string, range: scope) != nil }) else { return }
         let copy = NSMutableAttributedString(attributedString: st)
         guard attach(in: copy, range: scope) != 0 else { return }
         converting = true

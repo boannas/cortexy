@@ -110,12 +110,14 @@ extension Store {
     // MARK: Edits made in the copy
 
     /// What changed in the copy since it was last written: files edited (with the hash Cortexy last wrote there),
-    /// .md files added, files deleted (an iCloud placeholder, a file only moved off this Mac, isn't a deletion).
+    /// .md files added, files deleted (an iCloud placeholder, a file only moved off this Mac, isn't a deletion),
+    /// and files renamed or moved (gone from one place, the same text turning up at another: Obsidian does that).
     struct MirrorChanges {
         var changed: [(id: UUID, path: String, text: String, wrote: String)] = []
         var added: [(path: String, text: String)] = []
         var removed: [UUID] = []
-        var isEmpty: Bool { changed.isEmpty && added.isEmpty && removed.isEmpty }
+        var moved: [(id: UUID, path: String, from: String)] = []
+        var isEmpty: Bool { changed.isEmpty && added.isEmpty && removed.isEmpty && moved.isEmpty }
     }
 
     static func scanMirror(_ dir: URL) -> MirrorChanges {
@@ -123,12 +125,13 @@ extension Store {
         var out = MirrorChanges()
         guard !manifest.isEmpty else { return out } // never written: nothing to bring back
         let root = dir.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+        var gone: [(path: String, hash: String, id: UUID)] = []
         for (path, e) in manifest where e.hash != "file" {
             let file = dir.appendingPathComponent(path)
             guard file.standardizedFileURL.path.hasPrefix(dir.standardizedFileURL.path + "/") else { continue }
             if !fm.fileExists(atPath: file.path) {
                 let placeholder = file.deletingLastPathComponent().appendingPathComponent("." + file.lastPathComponent + ".icloud")
-                if let id = e.id, !fm.fileExists(atPath: placeholder.path) { out.removed.append(id) }
+                if let id = e.id, !fm.fileExists(atPath: placeholder.path) { gone.append((path, e.hash, id)) }
                 continue
             }
             guard let id = e.id, fileDate(file) != e.mtime, let text = try? String(contentsOf: file, encoding: .utf8), mirrorHash(text) != e.hash else { continue }
@@ -140,25 +143,42 @@ extension Store {
                 guard full.hasPrefix(root) else { continue }
                 let rel = String(full.dropFirst(root.count))
                 guard manifest[rel] == nil, !rel.hasPrefix("attachments/"), let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-                out.added.append((rel, text))
+                if let i = gone.firstIndex(where: { $0.hash == mirrorHash(text) }) {
+                    let g = gone.remove(at: i)
+                    out.moved.append((g.id, rel, g.path))
+                } else {
+                    out.added.append((rel, text))
+                }
             }
         }
+        out.removed = gone.map(\.id)
         return out
     }
 
     /// Brings the copy's changes in. An edit replaces its note's text, unless the note changed here too since the
     /// copy was written: then the copy's version comes in as a note of its own beside it, so nothing is lost. A
-    /// new file becomes a note in the matching folder (titled by its file name); a deleted file's note goes to
-    /// Recently Deleted. Locked notes and folders are left alone. Returns how many notes changed, and the files
-    /// brought in by id (the copy may write them under another name).
+    /// new file becomes a note in the matching folder (titled by its file name); a moved file moves its note (a
+    /// renamed one renames it); a deleted file's note goes to Recently Deleted. Locked notes and folders are left
+    /// alone. Returns how many notes changed, and the files brought in by id (the copy may write them under another name).
     func applyMirror(_ c: MirrorChanges, from dir: URL) -> (count: Int, adopted: [UUID: String]) {
         let current = Dictionary(mirrorFiles().map { ($0.value.id, Store.mirrorHash($0.value.text)) }) { a, _ in a }
         func open(_ fid: UUID) -> Bool { !inTrash(fid) && !chain(fid).contains(where: \.locked) }
+        var files: [String: URL]? // looked up once, and only for `![[Pasted image.png]]` (Obsidian puts those at the top)
         func fromCopy(_ text: String, path: String) -> String {
             let depth = path.components(separatedBy: "/").count - 1
             let back = text.replacingOccurrences(of: "](" + String(repeating: "../", count: depth) + "attachments/", with: "](attachments/")
-            return rehome(back.replacingOccurrences(of: "\r\n", with: "\n"), base: dir.appendingPathComponent(path).deletingLastPathComponent(), byName: [:])
+            if files == nil, back.contains("![[") { files = Store.filesByName(dir) }
+            return rehome(back.replacingOccurrences(of: "\r\n", with: "\n"), base: dir.appendingPathComponent(path).deletingLastPathComponent(), byName: files ?? [:])
         }
+        func folder(for path: String) -> UUID? { // where a file in the copy sits, its folders made if new; nil: under a lock
+            var fid = Folder.rootID
+            for name in path.components(separatedBy: "/").dropLast() {
+                if let sub = subfolders(fid).first(where: { Store.fileName($0.name) == name || $0.name == name }) { fid = sub.id } else { fid = addFolder(name, in: fid) }
+                if !open(fid) { return nil }
+            }
+            return fid
+        }
+        func named(_ path: String) -> String { ((path as NSString).lastPathComponent as NSString).deletingPathExtension }
         var count = 0, adopted: [UUID: String] = [:]
         for ch in c.changed {
             guard let f = folderOf(ch.id), let n = note(f.id, ch.id), n.lock == nil, open(f.id) else { continue }
@@ -171,19 +191,18 @@ extension Store {
             count += 1
         }
         for a in c.added {
-            var fid = Folder.rootID, ok = true
-            for name in a.path.components(separatedBy: "/").dropLast() {
-                if let sub = subfolders(fid).first(where: { Store.fileName($0.name) == name || $0.name == name }) { fid = sub.id } else { fid = addFolder(name, in: fid) }
-                if !open(fid) { ok = false; break }
-            }
-            guard ok else { continue }
+            guard let fid = folder(for: a.path) else { continue }
             var text = fromCopy(a.text, path: a.path)
-            let title = ((a.path as NSString).lastPathComponent as NSString).deletingPathExtension
-            if MD.title(text) != title { // its file name is how it's found (and named again)
-                let cut = MD.frontmatter(text)?.length ?? 0
-                text = (text as NSString).replacingCharacters(in: NSRange(location: cut, length: 0), with: "# \(title)\n")
-            }
+            let title = named(a.path)
+            if MD.title(text) != title { text = Store.retitled(text, title) } // its file name is how it's found (and named again)
             if let id = addNote(to: fid, text: text) { adopted[id] = a.path; count += 1 }
+        }
+        for m in c.moved { // the same note, now there; renamed, it takes the file's name (or it would be written back under the old one)
+            guard let from = folderOf(m.id), let n = note(from.id, m.id), n.lock == nil, open(from.id), let to = folder(for: m.path) else { continue }
+            moveNote(m.id, from: from.id, to: to)
+            if named(m.path) != named(m.from) { updateNote(to, m.id) { $0.text = Store.retitled($0.text, named(m.path), old: n.title); $0.modified = Date() } }
+            adopted[m.id] = m.path
+            count += 1
         }
         for id in c.removed {
             guard let f = folderOf(id), note(f.id, id)?.lock == nil, open(f.id) else { continue }
@@ -191,6 +210,15 @@ extension Store {
             count += 1
         }
         return (count, adopted)
+    }
+
+    /// `text` titled `title`: its old title renamed in place, or (not found, or no old title) a heading put on top, past any frontmatter.
+    static func retitled(_ text: String, _ title: String, old: String? = nil) -> String {
+        let ns = text as NSString, cut = MD.frontmatter(text)?.length ?? 0
+        if let old, !old.isEmpty, case let r = ns.range(of: old, range: NSRange(location: cut, length: ns.length - cut)), r.location != NSNotFound {
+            return ns.replacingCharacters(in: r, with: title)
+        }
+        return ns.replacingCharacters(in: NSRange(location: cut, length: 0), with: "# \(title)\n")
     }
 
     /// Takes a copy away (turned off, or moved elsewhere): the files it wrote, its manifest and note, and the
@@ -262,11 +290,7 @@ extension Store {
     /// new folder and how many notes came in.
     @discardableResult func importMarkdown(from root: URL, into parent: UUID = Folder.rootID) -> (UUID, Int) {
         let fm = FileManager.default
-        // Every file by name, for `![[name]]` (Obsidian finds those anywhere in the vault).
-        var byName: [String: URL] = [:]
-        if let e = fm.enumerator(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
-            for case let u as URL in e where byName[u.lastPathComponent.lowercased()] == nil { byName[u.lastPathComponent.lowercased()] = u }
-        }
+        let byName = Store.filesByName(root)
         let top = addFolder(root.lastPathComponent, in: parent)
         var count = 0
         func note(from file: URL, base: URL, title: String, into fid: UUID) {
@@ -309,6 +333,15 @@ extension Store {
 
     /// Links to files beside the note, made to work here: images copied into attachments, other files linked by
     /// `file://` where they are. `![[x.png]]` (Obsidian) becomes `![x](attachments/…)`.
+    /// Every file under `root` by name, for `![[name]]` (Obsidian finds those anywhere in the vault).
+    static func filesByName(_ root: URL) -> [String: URL] {
+        var out: [String: URL] = [:]
+        if let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+            for case let u as URL in e where out[u.lastPathComponent.lowercased()] == nil { out[u.lastPathComponent.lowercased()] = u }
+        }
+        return out
+    }
+
     private func rehome(_ text: String, base: URL, byName: [String: URL]) -> String {
         let images: Set<String> = ["png", "jpg", "jpeg", "gif", "heic", "tiff", "webp", "bmp", "svg"]
         func local(_ ref: String) -> URL? {
