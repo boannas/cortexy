@@ -240,7 +240,7 @@ enum Welcome {
         - Make a note from one: ⋯ → New from Template, ⌘P, or a shortcut of your own
         - In a template: `{{date}}` `{{time}}` `{{weekday}}` `{{folder}}` `{{date:MMMM yyyy}}`, and `{{cursor}}` for where typing starts
         - **⌘D** opens today's note in the folder *Daily* (Settings sets the folder, a template and the date format)
-        - **⇧⌘D** opens a calendar: dots mark days with a note (rest on one to read it), orange marks days with tasks due; click any day for its note, a week number for that week's note
+        - **⇧⌘D** opens a calendar: dots mark days with a note, orange marks days with tasks due (rest on a day to see its note and tasks); click any day for its note, a week number for that week's note
         - Under a note: what it links to, what links to it, and notes that **mention** it without a link (one click links them)
         - Put `goal: 500` in a note's frontmatter to see its word count against it
         - Rest on a version in Version History to see what changed since (added in green, removed in red)
@@ -478,7 +478,7 @@ enum Welcome {
         - สร้างโน้ตจาก template: ⋯ → New from Template, ⌘P หรือคีย์ลัดที่ตั้งเอง
         - ใน template ใช้ `{{date}}` `{{time}}` `{{weekday}}` `{{folder}}` `{{date:d MMMM yyyy}}` และ `{{cursor}}` = ตำแหน่งเริ่มพิมพ์
         - **⌘D** เปิดโน้ตของวันนี้ในโฟลเดอร์ *Daily* (ตั้งชื่อโฟลเดอร์ template และรูปแบบวันที่ได้ใน Settings ตั้งชื่อเดือนเป็นภาษาไทยได้)
-        - **⇧⌘D** เปิดปฏิทิน: จุดคือวันที่มีโน้ต (พักเมาส์เพื่ออ่าน) ขีดส้มคือวันที่มีงานครบกำหนด คลิกวันเพื่อเปิดโน้ต คลิกเลขสัปดาห์เพื่อเปิดโน้ตประจำสัปดาห์
+        - **⇧⌘D** เปิดปฏิทิน: จุดคือวันที่มีโน้ต ขีดส้มคือวันที่มีงานครบกำหนด (พักเมาส์บนวันเพื่อดูโน้ตและงานของวันนั้น) คลิกวันเพื่อเปิดโน้ต คลิกเลขสัปดาห์เพื่อเปิดโน้ตประจำสัปดาห์
         - ใต้โน้ตบอกว่าลิงก์ไปไหน ใครลิงก์มา และโน้ตที่**พูดถึง**โน้ตนี้แต่ยังไม่ได้ลิงก์ (คลิกเดียวเพื่อลิงก์)
         - ใส่ `goal: 500` ใน frontmatter เพื่อดูจำนวนคำเทียบเป้า
         - พักเมาส์บนเวอร์ชันใน Version History เพื่อดูว่าเปลี่ยนอะไรไปบ้าง (เพิ่ม = เขียว, ลบ = แดง)

@@ -744,9 +744,9 @@ struct SearchResults: View {
     var smart: Folder?
 
     var body: some View {
-        let text = smart?.query ?? nav.search
+        let text = smart?.query ?? nav.shownSearch
         let q = Query(text)
-        let hits = smart == nil ? nav.searchHits : nav.hits(q)
+        let hits = smart == nil ? nav.searchHits(for: text) : nav.hits(q)
         VStack(spacing: 0) {
             if let smart {
                 SmartQueryBar(nav: nav, folder: smart)

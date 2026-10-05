@@ -334,7 +334,7 @@ final class PanelController: NSObject {
         if lock, UserDefaults.standard.bool(forKey: Prefs.lockOnHide) { nav.lockAll() }
         nav.dragging = nil // a drag the panel closed under never ends
         nav.dropTarget = nil
-        store.save()
+        store.saveSoon() // in the background: writing on the main thread here cost the slide its first frames
         settleWork?.cancel(); settling = false
         swipe = .undecided
         // Sliding out, it no longer takes the keyboard or the mouse (a keystroke would land in the open note).
@@ -357,7 +357,7 @@ final class PanelController: NSObject {
 
     private enum Swipe { case undecided, yes, no }
     private var swipe = Swipe.undecided
-    private var lastFingers: CGFloat = 0
+    private var swipeSamples: [(t: TimeInterval, dx: CGFloat)] = []
 
     /// A trackpad scroll in the panel: horizontal and toward the screen edge, it pulls the card; else it's a
     /// normal scroll (including one in the panel's own sideways strips). Returns true when the swipe took the event.
@@ -366,22 +366,31 @@ final class PanelController: NSObject {
         // Fingers to the right (with natural scrolling the deltas follow the fingers).
         let fingers = e.isDirectionInvertedFromDevice ? e.scrollingDeltaX : -e.scrollingDeltaX
         let outward: CGFloat = Prefs.isLeft ? -1 : 1
-        if e.phase == .began || e.phase == .mayBegin { swipe = .undecided; lastFingers = 0 }
+        if e.phase == .began || e.phase == .mayBegin { swipe = .undecided; swipeSamples = [] }
         // Decided by the first movement: mostly sideways, toward the edge, and not over a strip that scrolls sideways.
         if swipe == .undecided, e.phase == .changed || e.phase == .began, abs(e.scrollingDeltaX) + abs(e.scrollingDeltaY) > 0 {
             swipe = abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) * 1.5 && fingers * outward > 0 && !overSidewaysScroller(e) ? .yes : .no
         }
         guard swipe == .yes else { return false }
         if e.phase == .changed || e.phase == .began {
-            if fingers != 0 { lastFingers = fingers }
+            if fingers != 0 { swipeSamples.append((e.timestamp, fingers)) }
+            swipeSamples.removeAll { e.timestamp - $0.t > 0.1 } // the last tenth of a second: how fast the fingers were going
             layout.drag = outward > 0 ? max(0, layout.drag + fingers) : min(0, layout.drag + fingers)
         } else if e.phase == .ended || e.phase == .cancelled {
             swipe = .undecided
-            // Far enough, or a flick: the last real movement before lifting (the end event itself carries none).
-            if abs(layout.drag) > cardRect.width * 0.25 || lastFingers * outward > 8 { hide() }
+            // Speed toward the edge at lifting, in points a second (the end event itself carries no movement).
+            let speed = Self.releaseSpeed(swipeSamples.filter { e.timestamp - $0.t <= 0.1 }) * outward // a pause before lifting: 0
+            // Moving back when lifted: it stays, however far it went. Else far enough, or a flick, closes it.
+            if speed > -250, abs(layout.drag) > cardRect.width * 0.25 || speed > 450 { hide() }
             else { withAnimation(Motion.card) { layout.drag = 0 } }
         }
         return true
+    }
+
+    /// Points a second over the samples (time, movement) of the last moment; 0 with too little to tell.
+    static func releaseSpeed(_ samples: [(t: TimeInterval, dx: CGFloat)]) -> CGFloat {
+        guard samples.count >= 2, let first = samples.first, let last = samples.last else { return samples.first.map { $0.dx * 60 } ?? 0 }
+        return samples.dropFirst().reduce(0) { $0 + $1.dx } / CGFloat(max(1.0 / 120, last.t - first.t))
     }
 
     /// The pointer is over something that itself scrolls sideways (the tag strip, the search chips).

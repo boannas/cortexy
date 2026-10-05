@@ -239,7 +239,21 @@ struct Folder: Codable, Identifiable, Hashable, Pinnable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
-    /// Writes pending edits right now (hiding the panel, quitting, switching data folders).
+    /// Writes pending edits now, off the main thread (the panel sliding away keeps its frames). Quitting still
+    /// uses `save()`, which waits behind this on the same queue.
+    func saveSoon() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        guard dirty else { return }
+        mergeExternalChanges()
+        let snapshot = folders, n = edits
+        io.async { [weak self] in
+            guard let self, self.write(snapshot) else { return }
+            DispatchQueue.main.async { self.savedEdits = max(self.savedEdits, n); self.recovering = false; self.onSaved?() }
+        }
+    }
+
+    /// Writes pending edits right now (quitting, switching data folders).
     func save() {
         pendingSave?.cancel()
         pendingSave = nil

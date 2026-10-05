@@ -8,6 +8,7 @@ import SwiftUI
         case folder(UUID), archive, upcoming, note(UUID)
         case version(UUID, Int) // a note's kept version, by its place in the history
         case web(URL)           // a link in a note: its page's title, summary and picture
+        case day(Date)          // a day in the calendar: its daily note and the tasks due then
 
         var isText: Bool { switch self { case .note, .version: true; default: false } }
     }
@@ -236,6 +237,7 @@ final class PreviewController: NSObject {
         case .upcoming: nav.route = .upcoming
         case .note(let id), .version(let id, _): if let f = nav.store.folderOf(id) { nav.route = .note(f.id, id) }
         case .web(let url): NSWorkspace.shared.open(url); return
+        case .day(let d): nav.calendarShown = false; nav.openPeriodic(.day, date: d)
         }
         PanelController.shared?.panel.makeKeyAndOrderFront(nil)
     }
@@ -261,6 +263,7 @@ final class PreviewController: NSObject {
         case .note(let id): nav.store.folderOf(id).flatMap { nav.store.note($0.id, id)?.title } ?? ""
         case .version(_, _): "Earlier version"
         case .web(let url): url.host ?? url.absoluteString
+        case .day(let d): Nav.show(d, time: false)
         }
     }
 
@@ -290,6 +293,17 @@ final class PreviewController: NSObject {
         switch c {
         case .note, .version, .web: return []
         case .archive: return nav.archivedNotes.map { note($0.1) }
+        case .day(let d): // the day's note, then its tasks (with their time); resting on one shows its note beside
+            let cal = Calendar.current
+            let daily = nav.dailyNotes()[Nav.periodTitle(.day, d)].map { id in
+                [Row(id: id.uuidString, item: .note(id), title: nav.store.folderOf(id).flatMap { nav.store.note($0.id, id)?.title } ?? "", detail: "This day's note", symbol: "doc.text")]
+            } ?? []
+            let tasks = nav.dueTasks.filter { !$0.done && cal.isDate($0.date, inSameDayAs: d) }.map { t in
+                Row(id: t.id, item: .note(t.nid), title: t.text.isEmpty ? "Untitled task" : t.text,
+                    detail: (t.hasTime ? t.date.formatted(date: .omitted, time: .shortened) + " · " : "") + (nav.store.note(t.fid, t.nid)?.title ?? ""),
+                    symbol: t.due == .overdue ? "exclamationmark.circle" : "circle")
+            }
+            return daily + tasks
         case .upcoming: // each task with a date; resting on one previews its note
             return nav.dueTasks.filter { !$0.done }.map { t in
                 Row(id: t.id, item: .note(t.nid), title: t.text.isEmpty ? "Untitled task" : t.text,

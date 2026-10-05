@@ -53,6 +53,7 @@ import UniformTypeIdentifiers
     var search = "" {
         didSet {
             guard oldValue != search else { return }
+            settle(from: oldValue)
             if oldValue.isEmpty != search.isEmpty { page += 1 }
             selection = nil
             hintIndex = nil
@@ -523,8 +524,22 @@ import UniformTypeIdentifiers
 
     // MARK: Keyboard selection
 
-    var searchHits: [(Folder, Note)] {
-        let scoped = searchInFolder && currentFolder != Folder.rootID, q = Query(search)
+    /// What the results list shows: the search once typing pauses. Starting and clearing show at once; each
+    /// key in between rebuilt the whole list (a hitch per key on a big library).
+    private(set) var shownSearch = ""
+    @ObservationIgnored private var settling: DispatchWorkItem?
+    private func settle(from old: String) {
+        settling?.cancel()
+        guard !old.isEmpty, !search.isEmpty else { shownSearch = search; return }
+        let work = DispatchWorkItem { [weak self] in if let self { shownSearch = search } }
+        settling = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+    }
+
+    var searchHits: [(Folder, Note)] { searchHits(for: search) }
+
+    func searchHits(for text: String) -> [(Folder, Note)] {
+        let scoped = searchInFolder && currentFolder != Folder.rootID, q = Query(text)
         // Notes whose title has the words come first, then the newest.
         func inTitle(_ n: Note) -> Bool { !q.words.isEmpty && q.words.allSatisfy { MD.finds($0, in: n.title) } }
         return hits(q, in: scoped ? store.subtree(currentFolder) : store.liveFolders)

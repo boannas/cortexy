@@ -2215,6 +2215,35 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(!view.dataWithPDF(inside: view.bounds).isEmpty)
 }
 
+/// Resting on a calendar day with tasks shows a card of that day's note and its tasks.
+@MainActor @Test func calendarDayPreviewsNoteAndTasks() {
+    Prefs.register()
+    let s = Store(testing: tempDir()), nav = Nav(store: s)
+    let day = Calendar.current.startOfDay(for: Date().addingTimeInterval(86_400 * 2))
+    nav.openPeriodic(.day, date: day)
+    _ = s.addNote(to: Folder.rootID, text: "# Errands\n- [ ] Pay rent 📅 \(MD.dayString(day)) 09:30\n- [x] Done already 📅 \(MD.dayString(day))\n- [ ] Other day 📅 \(MD.dayString(day.addingTimeInterval(86_400)))")
+    let rows = PreviewController(nav: nav).rows(.day(day))
+    #expect(rows.map(\.title) == [Nav.periodTitle(.day, day), "Pay rent"])
+    #expect(rows[1].detail.contains("Errands") && !rows[1].isFolder)
+    #expect(PreviewController(nav: nav).title(.day(day)) == Nav.show(day, time: false))
+}
+
+/// A swipe's speed at lifting, from its last tenth of a second; the results list follows typing once it pauses.
+@MainActor @Test func swipeSpeedAndSettledSearch() async throws {
+    #expect(PanelController.releaseSpeed([(0, 10), (0.05, 30), (0.1, 30)]) == 600) // 60 pt in 0.1 s
+    #expect(PanelController.releaseSpeed([]) == 0)
+    let nav = Nav(store: Store(testing: tempDir()))
+    nav.search = "w"
+    #expect(nav.shownSearch == "w")                // the first letter: at once
+    nav.search = "we"
+    nav.search = "wel"
+    #expect(nav.shownSearch == "w")                // still typing
+    try await Task.sleep(for: .milliseconds(250))
+    #expect(nav.shownSearch == "wel")
+    nav.search = ""
+    #expect(nav.shownSearch.isEmpty)               // cleared: at once
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {
@@ -2797,6 +2826,7 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(heights.allSatisfy { $0 <= home + 1 }, "came home past its height: \(heights.map { Int($0) })")
     #expect(abs(c.layout.height - home) <= 1)
 }
+
 
 
 

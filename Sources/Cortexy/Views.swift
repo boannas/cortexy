@@ -677,7 +677,7 @@ struct CalendarView: View {
                 .font(.system(size: 12))
                 .buttonStyle(.plain)
                 .foregroundStyle(Color.cortexyAccentText)
-                Text("Rest on a day to read its note · click to open or make it").font(.system(size: 10)).foregroundStyle(.tertiary)
+                Text("Rest on a day to see its note and tasks · click to open or make its note").font(.system(size: 10)).foregroundStyle(.tertiary)
             }
             .padding(12)
         }
@@ -702,9 +702,10 @@ struct CalendarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(tasks.isEmpty ? (note != nil ? "Open this day's note" : "Make this day's note")
-              : MD.plural(tasks.count, "task") + " due:\n" + tasks.map { "• " + ($0.text.isEmpty ? "Untitled task" : $0.text) }.joined(separator: "\n"))
-        if let note { cell.previewOnHover(.note(note)) } else { cell }
+        .help(note != nil || !tasks.isEmpty ? "Click to open this day's note" : "Click to make this day's note")
+        // A day with only a note previews the note; with tasks, a card of the note and the tasks (rest on one to read its note).
+        if !tasks.isEmpty { cell.previewOnHover(.day(Calendar.current.startOfDay(for: date))) }
+        else if let note { cell.previewOnHover(.note(note)) } else { cell }
     }
 
     @ViewBuilder private func weekCell(_ date: Date, notes: [String: UUID]) -> some View {

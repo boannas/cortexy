@@ -35,8 +35,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>Cortexy</string>
     <key>CFBundleExecutable</key><string>Cortexy</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.11.0</string>
-    <key>CFBundleVersion</key><string>16</string>
+    <key>CFBundleShortVersionString</key><string>0.12.0</string>
+    <key>CFBundleVersion</key><string>17</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>NSAppleScriptEnabled</key><true/>
     <key>OSAScriptingDefinition</key><string>Cortexy.sdef</string>
