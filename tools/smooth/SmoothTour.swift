@@ -170,6 +170,31 @@ private func tempDir() -> URL {
         m.stop("hover")
     }
 
+    /// Main-thread time per key typed in the long note: styling and layout, no drawing (works with the screen off).
+    @Test func typingCPU() async throws {
+        Prefs.register()
+        let (s, work, long) = library(tempDir())
+        let tv = MarkdownTextView(usingTextLayoutManager: false)
+        tv.frame = NSRect(x: 0, y: 0, width: 340, height: 600)
+        tv.isRichText = false
+        tv.textContainer?.widthTracksTextView = true
+        let w = NSWindow(contentRect: tv.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        w.contentView = tv
+        tv.load(s.note(work, long)!.text)
+        tv.setSelectedRange(NSRange(location: (tv.string as NSString).length / 2, length: 0))
+        var total = 0.0, worst = 0.0
+        for i in 0..<200 {
+            let t = CACurrentMediaTime()
+            if i % 20 == 19 { tv.insertNewline(nil) } else { tv.insertText(i % 5 == 4 ? " " : "ก", replacementRange: tv.selectedRange()) }
+            tv.restyle()
+            tv.layoutManager?.ensureLayout(forBoundingRect: tv.visibleRect, in: tv.textContainer!)
+            let d = CACurrentMediaTime() - t
+            total += d; worst = max(worst, d)
+            try await Task.sleep(for: .milliseconds(5)) // let deferred restyles run, as between real keys
+        }
+        print(String(format: "SMOOTH typingCPU     %.2f ms a key (worst %.1f ms)", total * 1000 / 200, worst * 1000))
+    }
+
     /// The first note opened in a fresh process, cold, and after the launch prewarm (same steps as the app's).
     @Test func firstOpenCold() async throws { try await firstOpen(warm: false) }
     @Test func firstOpenWarm() async throws { try await firstOpen(warm: true) }

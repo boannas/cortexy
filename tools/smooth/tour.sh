@@ -3,7 +3,7 @@
 # unlocked) and prints how late the main thread made frames: hitch ms per second (< 5 smooth) and the worst frame.
 #   tools/smooth/tour.sh [scenario...]          the working tree; default: every scenario
 #   REF=v0.2.1 tools/smooth/tour.sh typing      an older version, to compare
-# Scenarios: slide typing openLong pages search hover firstOpenCold firstOpenWarm
+# Scenarios: slide typing openLong pages search hover firstOpenCold firstOpenWarm typingCPU (the last needs no screen)
 # It builds a copy under build/smooth (an optimized build with testing on), with SmoothTour.swift added to its tests;
 # the repo's own Tests/ never get it.
 set -euo pipefail
