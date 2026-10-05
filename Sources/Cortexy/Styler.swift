@@ -723,6 +723,66 @@ extension Due {
     }
 }
 
+/// An embedded note (`![[Note]]`), drawn as a framed card of its text: rendered once, like an image.
+enum Embeds {
+    /// `note`: what the link found (nil: no such note). `part`: the heading or block asked for, if any.
+    @MainActor static func attachment(target: String, note: Note?, part: (heading: String?, block: String?), store: Store, width: CGFloat, dark: Bool) -> NSTextAttachment {
+        let shown: String? = note.flatMap { n in n.lock != nil ? nil : MD.embedText(n.text, heading: part.heading, block: part.block) }
+        let view = EmbedCard(target: target, title: note?.title, text: shown, locked: note?.lock != nil, store: store)
+            .frame(width: max(200, width))
+            .environment(\.colorScheme, dark ? .dark : .light)
+            .tint(Themes.shared.current.accentColor)
+        let r = ImageRenderer(content: view)
+        r.scale = NSScreen.main?.backingScaleFactor ?? 2
+        let a = NSTextAttachment()
+        if let img = r.nsImage {
+            a.image = img
+            a.bounds = CGRect(origin: .zero, size: img.size)
+        }
+        return a
+    }
+}
+
+/// What an embed looks like: the note's title (a link), its text as on a card, a bar down its side.
+struct EmbedCard: View {
+    let target: String
+    let title: String?
+    let text: String?
+    let locked: Bool
+    let store: Store
+
+    static let maxLines = 40
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title.map { $0 + (target.contains("#") ? "  ›  " + (MD.splitLink(target).heading ?? MD.splitLink(target).block.map { "^" + $0 } ?? "") : "") } ?? target,
+                  systemImage: locked ? "lock.fill" : title == nil ? "questionmark.square.dashed" : "arrow.turn.down.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.cortexyAccentText)
+            if locked {
+                Text("This note is locked.").font(.system(size: 12)).foregroundStyle(.secondary)
+            } else if title == nil {
+                Text("No note called “\(MD.splitLink(target).title)” yet.").font(.system(size: 12)).foregroundStyle(.secondary)
+            } else if let text {
+                let lines = text.components(separatedBy: "\n")
+                let cut = lines.count > Self.maxLines
+                var n = Note()
+                let _ = n.text = (cut ? lines.prefix(Self.maxLines).joined(separator: "\n") : text)
+                NoteCard(note: n, store: store, exporting: true, plain: true)
+                if cut { Text("…").foregroundStyle(.tertiary) }
+            } else {
+                Text("That part of the note isn't there any more.").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.vertical, 8)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .overlay(alignment: .leading) { Capsule().fill(Color.cortexyAccent.opacity(0.6)).frame(width: 3).padding(.vertical, 6) }
+    }
+}
+
 /// Obsidian's callout types: their colors and icons (aliases share them).
 enum Callouts {
     private static let kinds: [(names: [String], color: NSColor, symbol: String)] = [

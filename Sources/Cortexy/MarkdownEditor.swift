@@ -65,6 +65,7 @@ struct MarkdownEditor: NSViewRepresentable {
         tv.isContinuousSpellCheckingEnabled = !style.code
         tv.isEditable = !style.readOnly
         tv.resolve = { [store] in store.resolve($0) }
+        tv.store = store
         tv.importFile = { [store] in store.markdown(forFile: $0) }
         tv.importImage = { [store] in store.markdown(forImage: $0) }
         tv.completionSource = complete

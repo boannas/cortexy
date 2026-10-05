@@ -839,6 +839,7 @@ struct NoteCard: View {
     var selected = false
     var marked = false
     var exporting = false
+    var plain = false            // just the text, no card around it (an embedded note)
     var highlight: [String] = [] // search words to mark
     var showMatch: String?       // also show the first line with this word (search results)
     var toggle: (Int) -> Void = { _ in }
@@ -932,11 +933,11 @@ struct NoteCard: View {
         .font(style.swiftUI())
         .fontDesign(nil) // the panel's design would override these explicit fonts (a chosen family, code mode)
         .lineSpacing(style.lineSpacing)
-        .padding(.vertical, look.density.cardPadding)
-        .padding(.leading, look.density.cardPadding + 2)
-        .padding(.trailing, 26)
-        .overlay(alignment: .topTrailing) { badges }
-        .background { CardBackground(color: note.color, hover: hover, opaque: exporting) }
+        .padding(.vertical, plain ? 0 : look.density.cardPadding)
+        .padding(.leading, plain ? 0 : look.density.cardPadding + 2)
+        .padding(.trailing, plain ? 0 : 26)
+        .overlay(alignment: .topTrailing) { if !plain { badges } }
+        .background { if !plain { CardBackground(color: note.color, hover: hover, opaque: exporting) } }
         .overlay {
             if marked { RoundedRectangle(cornerRadius: Self.radius, style: .continuous).fill(Color.cortexyAccent.opacity(0.14)) }
             if selected {
@@ -1161,7 +1162,13 @@ struct LineView: View {
             .buttonStyle(.plain)
             .help(url?.path ?? name)
         case .text(let s):
-            inline(s)
+            if let m = MD.match(MD.embedRegex, s) { // an embedded note: on a card, just a link to it (the editor shows it whole)
+                let target = (s as NSString).substring(with: m.range(at: 1))
+                SwiftUI.Link(destination: Link.note(target)) { Label(target, systemImage: "arrow.turn.down.right") }
+                    .foregroundStyle(Color.cortexyAccentText)
+            } else {
+                inline(s)
+            }
         }
     }
 

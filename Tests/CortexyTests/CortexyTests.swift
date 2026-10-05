@@ -2306,6 +2306,34 @@ private func pngFile(in dir: URL) throws -> String {
     #expect((h.tv.string as NSString).paragraphRange(for: h.tv.selectedRange()).location == (h.tv.string as NSString).range(of: "- [ ] bread").location)
 }
 
+/// `![[Note]]` on its own line shows the note (or a heading's section, or a block's line) read-only, and stays
+/// `![[Note]]` in the Markdown; a click on it opens the note; a note can't show itself.
+@MainActor @Test func embeddedNotes() throws {
+    let plan = "---\naliases: [P]\n---\n# Plan\nintro\n## Budget\nrent 12,000 ^rent\n### Detail\nmore\n## Team\nAnn\n![[Plan]]"
+    #expect(MD.embedText(plan, heading: nil, block: nil)?.hasPrefix("# Plan\nintro") == true)
+    #expect(MD.embedText(plan, heading: "Budget", block: nil) == "## Budget\nrent 12,000 ^rent\n### Detail\nmore")
+    #expect(MD.embedText(plan, heading: nil, block: "rent") == "rent 12,000")
+    #expect(MD.embedText(plan, heading: nil, block: nil)?.hasSuffix("↪ [[Plan]]") == true) // an embed inside: just a link
+    #expect(MD.embedText(plan, heading: "Nope", block: nil) == nil)
+    #expect(MD.title("![[Plan]]") == "Plan")
+
+    let s = Store(testing: tempDir())
+    let planID = s.addNote(to: Folder.rootID, text: plan)!
+    #expect(s.note(titled: "p")?.id == planID) // by alias too
+
+    let h = EditorHarness(dir: tempDir())
+    h.tv.store = s
+    let md = "Notes\n![[Plan#Budget]]\n![[Missing]]\nend"
+    h.tv.load(md)
+    let st = h.tv.textStorage!
+    #expect(st.attribute(.attachment, at: 6, effectiveRange: nil) != nil)
+    #expect(st.attribute(.cxOpen, at: 6, effectiveRange: nil) as? URL == Link.note("Plan#Budget"))
+    #expect(h.tv.markdown() == md) // still ![[…]] in the note
+    h.tv.noteID = planID
+    h.tv.load("![[Plan]]")
+    #expect(st.attribute(.attachment, at: 0, effectiveRange: nil) == nil) // itself: left as typed
+}
+
 /// The panel is as tall as what it shows (up to the screen), hanging from the top: short pages make a short
 /// panel, long ones grow it, and the top edge stays where it is.
 @MainActor @Test func panelFitsItsContent() async throws {
@@ -2888,6 +2916,7 @@ private func pngFile(in dir: URL) throws -> String {
     #expect(heights.allSatisfy { $0 <= home + 1 }, "came home past its height: \(heights.map { Int($0) })")
     #expect(abs(c.layout.height - home) <= 1)
 }
+
 
 
 

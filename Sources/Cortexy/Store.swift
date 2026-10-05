@@ -501,6 +501,13 @@ struct Folder: Codable, Identifiable, Hashable, Pinnable {
 
     func subfolders(_ id: UUID) -> [Folder] { folders.filter { parentID($0) == id } }
 
+    /// The newest note with this title (or alias), for an embed. Locked-away folders aren't looked in.
+    func note(titled title: String) -> Note? {
+        let t = title.trimmingCharacters(in: .whitespaces), all = liveFolders.flatMap(\.notes)
+        return all.filter { $0.title.localizedCaseInsensitiveCompare(t) == .orderedSame }.max { $0.modified < $1.modified }
+            ?? all.filter { MD.aliases($0.text).contains { $0.localizedCaseInsensitiveCompare(t) == .orderedSame } }.max { $0.modified < $1.modified }
+    }
+
     /// The folder and everything inside it, depth first in display order.
     func subtree(_ id: UUID) -> [Folder] {
         (folder(id).map { [$0] } ?? []) + subfolders(id).pinnedFirst.flatMap { subtree($0.id) }

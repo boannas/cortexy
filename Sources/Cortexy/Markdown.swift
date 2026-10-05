@@ -133,7 +133,7 @@ enum MD {
         return out
     }
     private static let plainPasses: [(NSRegularExpression, String)] = [
-        (Styler.code, "$1"), (try! NSRegularExpression(pattern: MD.wikiAlias), "$1"),
+        (Styler.code, "$1"), (try! NSRegularExpression(pattern: #"!(?=\[\[)"#), ""), (try! NSRegularExpression(pattern: MD.wikiAlias), "$1"),
         (try! NSRegularExpression(pattern: MD.wikiPlain), "$1"), (Styler.link, "$1"),
         (Styler.bold, "$2"), (Styler.italic, "$1$2"), (Styler.strike, "$1"), (Styler.mark, "$1"),
     ]
@@ -599,6 +599,41 @@ extension MD {
             return parsed[top...bottom].map { if case .quote(let q) = $0 { q } else { "" } }.joined(separator: "\n")
         default: return nil
         }
+    }
+}
+
+// MARK: Embeds
+
+extension MD {
+    /// A line that is only `![[Note]]`, `![[Note#Heading]]` or `![[Note#^id]]` (Obsidian's embeds): the note, or
+    /// that part of it, shown in place, read-only.
+    static let embedRegex = try! NSRegularExpression(pattern: #"^[ \t]*!\[\[((?:(?!\[\[)[^\n|])+?)(?:\|[^\n]*?)?\]\][ \t]*$"#, options: .anchorsMatchLines)
+
+    /// What an embed shows of a note: all of it (past its frontmatter), the section under a heading (to the next
+    /// heading of the same or a higher level), or the line with a block id. Embeds inside it become plain links,
+    /// so a note can't show itself forever.
+    static func embedText(_ text: String, heading: String?, block: String?) -> String? {
+        var lines = text.components(separatedBy: "\n")
+        lines.removeFirst(min(lines.count, frontmatter(text)?.lines ?? 0))
+        let body = lines.joined(separator: "\n")
+        var part: [String]
+        if heading != nil || block != nil {
+            guard let at = line(heading: heading, block: block, in: body) else { return nil }
+            let all = body.components(separatedBy: "\n")
+            if let heading, heading.isEmpty == false, case let .heading(level, _) = MD.lines(all[at]).first {
+                let end = all.indices.dropFirst(at + 1).first { if case let .heading(l, _) = MD.lines(all[$0]).first { l <= level } else { false } } ?? all.count
+                part = Array(all[at..<end])
+            } else {
+                part = [all[at].replacingOccurrences(of: #"\s\^[A-Za-z0-9-]+\s*$"#, with: "", options: .regularExpression)]
+            }
+        } else {
+            part = body.components(separatedBy: "\n")
+        }
+        part = part.map { l in
+            guard let m = match(embedRegex, l) else { return l }
+            return "↪ [[" + (l as NSString).substring(with: m.range(at: 1)) + "]]"
+        }
+        return part.joined(separator: "\n").trimmingCharacters(in: .newlines)
     }
 }
 

@@ -15,6 +15,8 @@ final class MarkdownTextView: NSTextView {
     var previewing = false // read-only preview: no paragraph is being edited, so all markup stays hidden
     var onPreviewClick: () -> Void = {} // previews: a click that isn't on a link
     var resolve: (String) -> URL? = { _ in nil }
+    /// The notes, for embeds (`![[Note]]`); nil: embeds stay as typed.
+    var store: Store?
     var noteID: UUID? // whose text this is: whether its web images may be fetched
     var importFile: (URL) -> String = { $0.absoluteString }
     var importImage: (NSImage) -> String? = { _ in nil }
@@ -37,7 +39,7 @@ final class MarkdownTextView: NSTextView {
 
     /// Replaces `![](…)` and `[name](file://…)` in `range` with attachment characters. Returns the length change.
     private func attach(in s: NSMutableAttributedString, range: NSRange) -> Int {
-        var delta = 0
+        var delta = attachEmbeds(in: s, range: range)
         for (re, isImage) in [(MD.imageRegex, true), (MD.fileLinkRegex, false)] {
             let ns = s.string as NSString
             let limit = NSRange(location: range.location, length: min(range.length + delta, ns.length - range.location))
@@ -61,6 +63,31 @@ final class MarkdownTextView: NSTextView {
                 s.replaceCharacters(in: m.range, with: piece)
                 delta -= m.range.length - 1
             }
+        }
+        return delta
+    }
+
+    /// `![[Note]]` lines as the note's card (read-only; clicking it opens the note). Whole lines only, outside code.
+    private func attachEmbeds(in s: NSMutableAttributedString, range: NSRange) -> Int {
+        guard let store, !style.code, s.string.contains("![[") else { return 0 }
+        let ns = s.string as NSString
+        let fence = Styler.codeBlocks(s.string).map(\.whole)
+        var delta = 0
+        let limit = NSRange(location: range.location, length: min(range.length, ns.length - range.location))
+        for m in MD.embedRegex.matches(in: s.string, range: limit).reversed() where !fence.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) {
+            let target = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+            let parts = MD.splitLink(target)
+            let note = store.note(titled: target) ?? store.note(titled: parts.title)
+            let whole = note.map { $0.title.localizedCaseInsensitiveCompare(target) == .orderedSame } ?? false // "C# tips" is a title, not C's heading
+            if let note, note.id == noteID { continue } // a note embedding itself: left as typed
+            let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua // as this editor looks
+            let a = Embeds.attachment(target: target, note: note, part: whole ? (nil, nil) : (parts.heading, parts.block), store: store, width: maxImageWidth, dark: dark)
+            let piece = NSMutableAttributedString(attachment: a)
+            piece.addAttributes(Styler.base(style), range: NSRange(location: 0, length: 1))
+            piece.addAttribute(.cxSource, value: ns.substring(with: m.range), range: NSRange(location: 0, length: 1))
+            piece.addAttribute(.cxOpen, value: Link.note(target), range: NSRange(location: 0, length: 1))
+            s.replaceCharacters(in: m.range, with: piece)
+            delta -= m.range.length - 1
         }
         return delta
     }
@@ -480,6 +507,10 @@ final class MarkdownTextView: NSTextView {
             if i < st.length, st.attribute(.link, at: i, effectiveRange: nil) != nil, NSLocationInRange(selectedRange().location, para) {
                 return setSelectedRange(NSRange(location: i, length: 0))
             }
+        }
+        if let url = attachmentURL(at: p), url.scheme == "cortexy" { // an embedded note: a click opens it
+            if event.clickCount == 1 { _ = delegate?.textView?(self, clickedOnLink: url, at: characterIndexForInsertion(at: p)) }
+            return
         }
         if event.clickCount == 2, let url = attachmentURL(at: p) {
             if UserDefaults.standard.object(forKey: Prefs.quickLook) as? Bool ?? true { quickLook(url) } else { NSWorkspace.shared.open(url) }
