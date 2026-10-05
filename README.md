@@ -216,9 +216,16 @@ PDF แสดงหน้าแรก
 | `NoteWindow.swift` | โน้ตในหน้าต่างลอยของตัวเอง |
 | `Reminders.swift` | แจ้งเตือนงานที่มี due date |
 | `Lock.swift` | เข้ารหัสโน้ตที่ล็อก, Keychain, Touch ID |
-| `Editor.swift` | NSTextView แสดง Markdown สด, checkbox, รูป/ไฟล์แนบ |
-| `Markdown.swift` | logic Markdown ระดับบรรทัด (มีเทสต์) |
+| `Editor.swift` | MarkdownTextView: แสดงผล, คลิก/คีย์, paste/copy, รายการแนะนำ, preview ลิงก์, Quick Look |
+| `Styler.swift` | จัดรูปแบบ Markdown สด, ฟอนต์/ขนาด (TextStyle), รูป/ไฟล์/PDF แนบ, ชนิด callout |
+| `MarkdownEditor.swift` | editor ใน SwiftUI + แถบจัดรูปแบบลอย + รายการแนะนำ |
+| `Markdown.swift` | logic Markdown ระดับบรรทัด: ลิงก์, tag, frontmatter, ตาราง, งาน/วันที่, ค้นหา (มีเทสต์) |
+| `Clipboard.swift` | วางลิงก์/โค้ด, HTML → Markdown, Markdown → HTML |
+| `Calc.swift` | คิดเลขในโน้ต (parser ของตัวเอง) |
 | `Store.swift` | โมเดล, บันทึก, backup, sync, ไฟล์แนบ, export (มีเทสต์) |
+| `Media.swift` | รูปจากเว็บ, ชื่อ/การ์ดของลิงก์เว็บ, OCR ข้อความในรูป |
+| `Library.swift` | Markdown mirror, import โฟลเดอร์ .md, Spotlight |
+| `Sources/cortexy-cli/main.swift` | คำสั่ง `cortexy` และ MCP server (อยู่ใน `Contents/Helpers` ของแอป) |
 | `Theme.swift` | ธีม 42 แบบ + ธีมที่สร้างเอง |
 | `Settings.swift` | หน้าต่าง Settings, ตัวอัด hotkey, ย้ายโฟลเดอร์ข้อมูล |
 | `Scripting.swift` + `Resources/Cortexy.sdef` | AppleScript, Services |
