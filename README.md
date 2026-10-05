@@ -1,172 +1,209 @@
 # Cortexy
 
-แอปโน้ตข้างจอสำหรับ macOS 26+ — ดันเมาส์ชนขอบจอหรือกด **⌃⌥N** แล้ว panel จะเลื่อนออกมา (สูงเท่าที่มีเนื้อหา ห้อยจากขอบบนจอแบบ Dynamic Island — โน้ตสั้น panel ก็สั้น, พิมพ์ยาวขึ้น panel ก็ยืดตาม จนสุดความสูงจอ)
+A side-of-the-screen notes app for macOS 26+. Push the pointer against the screen edge or press **⌃⌥N** and the panel
+slides out. It is only as tall as what it shows, hanging from the top of the screen like the Dynamic Island: a short
+note makes a short panel, and the panel grows as you type, up to the height of the screen.
 
-## Build & ติดตั้ง
+Current version: **0.14.2**. What each version added or fixed: [CHANGELOG.md](CHANGELOG.md) (in Thai).
 
-ใช้แค่ Xcode Command Line Tools (`xcode-select --install`) ไม่ต้องมี Xcode, ไม่ต้องมี Apple Developer account
+## Build and install
 
-```bash
-./build.sh install   # build → /Applications/Cortexy.app → เปิด
-./build.sh           # build อย่างเดียว → build/Cortexy.app
-./build.sh test      # รันเทสต์
-```
-
-ทดสอบด้วยมือทีละฟีเจอร์ (ใช้ยังไง ควรเห็นอะไร): [TESTING.md](TESTING.md) ·
-วัดความลื่น (hitch ms ต่อวินาที, จอต้องเปิดอยู่และไม่ล็อก): `tools/smooth/tour.sh [scenario]` หรือเทียบเวอร์ชันเก่า `REF=v0.2.1 tools/smooth/tour.sh typing` ·
-แผนย้ายไป Xcode: [XCODE_PLAN.md](XCODE_PLAN.md)
-
-แอปเซ็นแบบ ad-hoc (build บนเครื่องตัวเองจึงเปิดได้เลย)
-
-แต่ละเวอร์ชันเพิ่ม/แก้อะไร: [CHANGELOG.md](CHANGELOG.md)
-
-### Running it on another Mac (ส่งให้คนอื่นใช้)
+Only the Xcode Command Line Tools are needed (`xcode-select --install`): no Xcode, no Apple Developer account.
 
 ```bash
-./build.sh dist      # → build/Cortexy-<version>.zip ใช้ได้ทั้ง Apple silicon และ Intel
+./build.sh install   # build → /Applications/Cortexy.app → launch
+./build.sh           # build only → build/Cortexy.app
+./build.sh test      # run the tests
 ```
 
-สิ่งที่เครื่องปลายทางต้องมี/ต้องทำ:
-- **macOS 26 (Tahoe) ขึ้นไป** — ใช้ Liquid Glass ของ macOS 26; Intel Mac ใช้ได้ถ้าลง macOS 26 ได้ (macOS 26 เป็นรุ่นสุดท้ายของ Intel)
-- ไม่ต้องลง Xcode หรืออะไรเพิ่ม: แตก zip แล้วลาก `Cortexy.app` ไปไว้ใน Applications
-- **เปิดครั้งแรก**: แอปเซ็นแบบ ad-hoc (ไม่ใช่ Developer ID) macOS จะบอกว่าตรวจสอบผู้พัฒนาไม่ได้ —
-  เปิดหนึ่งครั้ง แล้วไป System Settings → Privacy & Security → เลื่อนลงไปกด **Open Anyway**
-  (หรือใน Terminal: `xattr -dr com.apple.quarantine /Applications/Cortexy.app`)
-- ระบบจะขออนุญาตเองเมื่อใช้ฟีเจอร์นั้นครั้งแรก: **Notifications** (แจ้งเตือนงาน), **Screen Recording** (Insert Screenshot),
-  Keychain (ถ้าเปิด Touch ID ปลดล็อกโน้ต) — ไม่ต้องใช้ Accessibility
-- เปิดครั้งแรกจะมีโน้ตคู่มือทุกฟีเจอร์ให้ทั้งภาษาอังกฤษและไทย (`Sources/Cortexy/Welcome.swift`) ลบทิ้งได้
-- ข้อมูลอยู่ที่ `~/Library/Application Support/Cortexy` (เปลี่ยนเป็นโฟลเดอร์ iCloud ได้ใน Settings → Data)
+- Manual test checklist, feature by feature (how to use it, what you should see): [TESTING.md](TESTING.md) (in Thai)
+- Smoothness meter (hitch ms per second; the screen must be awake and unlocked): `tools/smooth/tour.sh [scenario]`,
+  or compare with an older version: `REF=v0.2.1 tools/smooth/tour.sh typing`
+- Plan for moving to Xcode (App Intents, widgets, share extension, notarizing): [XCODE_PLAN.md](XCODE_PLAN.md) (in Thai)
 
-**ลองเองแบบคนใช้ครั้งแรก โดยไม่ทับ Cortexy ที่ใช้อยู่**
-- เหมือนเครื่องใหม่ที่สุด: System Settings → Users & Groups → Add User แล้ว log in เข้า user นั้นไปลอง
-  (วาง zip ไว้ที่ `/Users/Shared`) — โน้ต, settings, hotkey, รหัสล็อก แยกจากของคุณทั้งหมด
-- เร็วกว่า: Quit Cortexy ตัวที่ใช้อยู่ก่อน (สองตัวพร้อมกันจะแย่ง hotkey) แล้วรันจาก Terminal
-  `CORTEXY_DATA_DIR=~/Desktop/cortexy-demo ~/Downloads/Cortexy.app/Contents/MacOS/Cortexy`
-  — โน้ตอยู่ในโฟลเดอร์ใหม่ (ได้คู่มือครบ) แต่ **settings ใช้ร่วมกับตัวจริง** อย่าแก้ theme/shortcut/Data ระหว่างลอง;
-  เลิกลองด้วย Quit แล้วเปิด `/Applications/Cortexy.app` ตามเดิม ลบ `~/Desktop/cortexy-demo` ทิ้งได้
+The app is signed ad hoc, so a build made on your own Mac opens straight away.
 
-ถ้าจะแจกให้คนทั่วไปแบบไม่มีขั้นตอน Open Anyway ต้องสมัคร Apple Developer Program (ปีละ $99),
-เซ็นด้วยใบรับรอง Developer ID แล้ว notarize (`xcrun notarytool` มีใน Command Line Tools อยู่แล้ว ไม่ต้องใช้ Xcode)
+### Running it on another Mac
 
-## ฟีเจอร์
+```bash
+./build.sh dist      # → build/Cortexy-<version>.zip, for both Apple silicon and Intel
+```
 
-**เปิด panel**: ดันเมาส์ชนขอบจอ (เว้นมุมจอให้ hot corner) · hotkey (ตั้งเองได้) · Open Bar แถบบางๆ ที่ขอบจอ ·
-ไอคอน menu bar · เปิดแอปซ้ำจาก Finder/Spotlight — ใช้ได้กับแอปเต็มจอ, Stage Manager, หลายจอ ·
-**⇧⌘P ปักหมุด panel** ให้ค้างไว้ตอนคลิกแอปอื่น · ปรับ**ความโปร่งใส** · **ซ่อนจากการแชร์จอ/อัดจอ** (Settings → General)
+What the other Mac needs:
+- **macOS 26 (Tahoe) or later**: the app uses macOS 26's Liquid Glass. Intel Macs work if they run macOS 26 (the last
+  release for Intel).
+- Nothing else to install: unzip and drag `Cortexy.app` into Applications.
+- **First launch**: the app is signed ad hoc (not with a Developer ID), so macOS says it can't verify the developer.
+  Open it once, then go to System Settings → Privacy & Security, scroll down and click **Open Anyway**
+  (or in Terminal: `xattr -dr com.apple.quarantine /Applications/Cortexy.app`).
+- macOS asks for permissions the first time a feature needs them: **Notifications** (task reminders), **Screen
+  Recording** (Insert Screenshot), Keychain (Touch ID for locked notes). Accessibility is not needed.
+- The first launch adds guide notes covering every feature, in English and Thai (`Sources/Cortexy/Welcome.swift`).
+  Delete them whenever you like.
+- Data lives in `~/Library/Application Support/Cortexy` (can be moved to an iCloud Drive folder in Settings → Data).
 
-**จัดระเบียบ**: โฟลเดอร์ซ้อนกันได้ไม่จำกัดชั้น · สร้างโน้ตที่หน้าแรกได้เลย ไม่ต้องอยู่ในโฟลเดอร์ ·
-เรียงโน้ตตามวันแก้ / วันสร้าง / ชื่อ / ลากเอง (ตั้งแยกแต่ละโฟลเดอร์ที่เมนู ⋯) ·
-**Recently Deleted**: ลบแล้วกด Undo ได้ (หรือ ⌘Z), กู้คืนได้ภายใน 30 วัน · **Archive** เก็บโน้ตออกจากโฟลเดอร์และผลค้นหา ·
-พับ/กางโฟลเดอร์ย่อยในหน้าเดิม (ลูกศรหน้าโฟลเดอร์) · กดชื่อหัวข้อเพื่อกระโดดไปโฟลเดอร์ชั้นบน ·
-ลากโน้ต/โฟลเดอร์ไปวางบนโฟลเดอร์เพื่อย้าย (โฟลเดอร์: วางกลางแถว) หรือบน Recently Deleted เพื่อลบ ·
-เลือกหลายอัน (⌘-click, ⇧-click, ⌘A) แล้วย้าย/ติดสี/ปักหมุด/archive/ลบทีเดียว · ไอคอนโฟลเดอร์ (เลือกจากตาราง SF Symbol/emoji) ·
-หน้าแรกแยกหมวด Folders / Smart Folders / Library (Archive, Recently Deleted) / Tags / Notes ·
-Duplicate โน้ต · Outline กระโดดไปหัวข้อในโน้ต · ติดสี (พื้นหลัง/แถบข้าง) · ปักหมุด · ลากเรียงลำดับโน้ตและโฟลเดอร์ (ลากเข้า/ออกกลุ่มปักหมุด = ปักหมุด/เลิกปักหมุด) ·
-พับโน้ตยาว · ย้ายโฟลเดอร์ · ค้นหาทุกโฟลเดอร์ · จำหน้าที่เปิดล่าสุด
+**Trying it as a first-time user without touching the Cortexy you use**
+- Closest to a new Mac: System Settings → Users & Groups → Add User, then log in as that user (put the zip in
+  `/Users/Shared`). Notes, settings, hotkeys and the lock password are all separate from yours.
+- Quicker: quit your running Cortexy first (two copies fight over the hotkeys), then run from Terminal
+  `CORTEXY_DATA_DIR=~/Desktop/cortexy-demo ~/Downloads/Cortexy.app/Contents/MacOS/Cortexy`.
+  The notes go into the new folder (with the full guide), but **settings are shared with your real copy**, so don't
+  change themes, shortcuts or Data settings while trying it. To stop, quit and open `/Applications/Cortexy.app` as
+  usual; `~/Desktop/cortexy-demo` can be deleted.
 
-**ค้นหา & ลิงก์**: **⌘O** quick open (โน้ต/โฟลเดอร์/#tag แบบ fuzzy) · **⌘P** command palette (หรือพิมพ์ `>` ใน ⌘O) ·
-`#tag` (คลิกเพื่อดูโน้ตที่มี tag นั้น, รายการ tag ที่หน้าแรก, พิมพ์ `#` แล้วมีตัวเลือกให้) ·
-`[[ชื่อโน้ต]]` / `[[ชื่อโน้ต|ข้อความ]]` ลิงก์ไปโน้ตอื่น (ไม่มีโน้ตนั้นจะสร้างให้, พิมพ์ `[[` แล้วมีตัวเลือก,
-แก้ชื่อโน้ตแล้วลิงก์ที่ชี้มาจะเปลี่ยนตาม) · `[[ชื่อโน้ต#หัวข้อ]]` ไปที่หัวข้อ (พิมพ์ `#` แล้วมีรายการหัวข้อ), `[[#หัวข้อ]]` ในโน้ตเดียวกัน,
-`[[ชื่อโน้ต#^id]]` ไปบรรทัดที่ลงท้ายด้วย `^id` · **Embed** `![[ชื่อโน้ต]]` (บรรทัดเดียวโดดๆ) แสดงโน้ตนั้นแบบอ่านอย่างเดียว, `![[โน้ต#หัวข้อ]]` เฉพาะส่วน (caret อยู่บรรทัดนั้น = เห็นข้อความไว้แก้ กล่องอยู่ข้างล่าง) · **frontmatter** (`---` properties แบบ Obsidian) แสดงจางๆ ไม่ถูกใช้เป็นชื่อโน้ต,
-`tags:` นับเป็น tag, `aliases:` เป็นชื่ออื่นของโน้ตสำหรับลิงก์ · "N linked here" ใต้โน้ต = backlinks, "N links" = ลิงก์ออก, "N mentions" = โน้ตที่พูดถึงแต่ยังไม่ลิงก์ (กดลิงก์ให้ได้) ·
-**⌘] Forward** · **Random note** (⌘P) · **Rename tag** (คลิกขวา tag ที่หน้าแรก, ชื่อซ้ำ = รวม) และ tag ซ้อนแบบ tree ·
-**Show Attachments** (⌘P) ดูไฟล์แนบทั้งหมด + ล้างไฟล์ที่ไม่ใช้ · กราฟ **Color by** โฟลเดอร์/tag ·
-Version History แสดง **diff** กับปัจจุบัน · เวลาอ่าน + `goal:` จำนวนคำใน frontmatter ·
-**⌘G Graph** หน้าต่างกราฟ: จุด = โน้ต, เส้น = `[[ลิงก์]]` (เลือกแสดง #tag เป็นจุดสีเขียวน้ำทะเล / ซ่อนโน้ตที่ไม่มีลิงก์ได้) —
-ลากจุดเพื่อจัด, ลากพื้นหลังเพื่อเลื่อน, scroll/pinch เพื่อซูม, ชี้ที่จุดเพื่อไฮไลต์โน้ตที่ลิงก์กัน, คลิกเพื่อเปิดโน้ตใน panel;
-"Around this note" = แสดงเฉพาะโน้ตที่ห่างไม่เกิน 2 ลิงก์ (คลิกขวาโน้ต → Show in Graph) ·
-คลิกช่อง Search จะมีตัวช่วย: `#` แสดงแท็กทั้งหมด · `is:` ตัวกรอง (todo, done, pinned…) · `path:` โฟลเดอร์ · `"วลี"` · `-คำ` · `>` คำสั่ง — Tab เลือกอันแรก ·
-**ล็อกโฟลเดอร์** (คลิกขวาโฟลเดอร์ → Lock Folder…): ทุกโน้ตในโฟลเดอร์ (และโฟลเดอร์ย่อย) ถูกเข้ารหัสด้วยรหัสเดียวกับโน้ตที่ล็อก, ไม่โผล่ในค้นหา/แท็ก/⌘O/graph/preview จนกว่าจะปลดล็อก, โน้ตที่เขียนเพิ่มตอนเปิดอยู่จะถูกเข้ารหัสเมื่อล็อกอีกครั้ง ·
-ค้นหาขั้นสูง: `"วลี"` `-ไม่เอา` `#tag` `tag:x` `path:Work` `is:todo` `is:done` `is:task` `is:pinned` `is:archived` ·
-ค้นเฉพาะโฟลเดอร์ที่เปิดอยู่ · ไฮไลต์คำที่เจอ · **Save as Smart Folder** เก็บการค้นหาเป็นโฟลเดอร์
+To give it to people without the Open Anyway step, you need the Apple Developer Program ($99 a year): sign with a
+Developer ID certificate and notarize (`xcrun notarytool` comes with the Command Line Tools; no Xcode needed).
 
-**เขียน**: **ตาราง Markdown** (ปุ่ม ⊞ ในแถบล่าง, คอลัมน์เรียงตรงกันเอง, `:-:` จัดกลาง/`--:` ชิดขวา,
-คลิกในตาราง = แก้ข้อความดิบ, Tab/⇧Tab ไปช่องถัดไป/ก่อนหน้า, Tab ช่องสุดท้ายหรือ ↩ ท้ายแถว = เพิ่มแถว) ·
-**สีโค้ด** ตามภาษาหลัง ``` (swift, js/ts, python, go, rust, java/kotlin, c/c++, ruby, shell, sql, json/yaml) ·
-`==ไฮไลต์==` (`==🔴…==` 🟠 🟢 🔵 🟣 = สีอื่น) · **Callout** `> [!tip] หัวข้อ` (กล่องสีตามชนิด, `-`/`+` พับได้) ·
-**เมนู `/`** ต้นบรรทัด · **ปุ่มจัดรูปแบบลอย**เหนือข้อความที่เลือก · ขนาดรูป `![alt|400](…)` (คลิกขวารูป → Image Size) ·
-**Read Only** ต่อโน้ต · เชิงอรรถ `[^1]` (คลิกเพื่อไปที่ `[^1]: ข้อความ`) ·
-**Templates**: โน้ตในโฟลเดอร์ "Templates" → ⋯ → New from Template (ตัวแปร `{{date}}` `{{time}}` `{{weekday}}`
-`{{folder}}` `{{date:MMMM yyyy}}`, `{{cursor}}` = ตำแหน่งเริ่มพิมพ์) · **⌘D โน้ตประจำวัน** (**⇧⌘D ปฏิทิน**: พักเมาส์ดูโน้ตและงานของวัน, ขีดส้ม = วันที่มีงาน, คลิกวันหรือเลขสัปดาห์, โน้ตประจำสัปดาห์/เดือนพร้อม template ของตัวเอง, `{{week}}`) ในโฟลเดอร์ "Daily"
-(ตั้งชื่อโฟลเดอร์, template, รูปแบบวันที่ และ hotkey ได้ใน Settings)
+## Features
 
-**Power**: **Version history** (คลิกขวา → Version History, พักเมาส์ดูเวอร์ชัน, Restore + Undo; เก็บใน `History/`) ·
-**หน้าต่างลอย** (คลิกขวา → Open in Window: อยู่บนสุดเสมอ, จำตำแหน่ง, เปิดค้างไว้ข้ามการเปิดแอปใหม่) ·
-**รูปจากเว็บ** `![](https://…)` (โหลดเบื้องหลัง เก็บ cache; ปิดได้) · **Due date** `- [ ] งาน 📅 2026-10-05 14:30`
-(หรือ `@2026-10-05`, ปุ่มปฏิทินใต้ editor) แดง = เลยกำหนด, ส้ม = วันนี้, สีธีม = วันถัดไป · หน้า **Upcoming** + **แจ้งเตือน** ของ macOS
-(งานที่ติ๊กแล้วย้ายลงล่างรายการ, คลิกขวา → Delete Checked Items) (คลิกแจ้งเตือน = เปิดโน้ตที่บรรทัดของงาน, มีปุ่ม snooze 10 นาที/1 ชม./พรุ่งนี้) · สถานะงาน `- [/]` กำลังทำ, `- [-]` ยกเลิก ·
-**งานทำซ้ำ** `🔁 every week` / `🔁 ทุกเดือน` (ติ๊กแล้วได้งานรอบถัดไป) · **คิดเลขในโน้ต**: บรรทัดลงท้าย `=` แสดงผล, `ชื่อ = ค่า` ตั้งตัวแปร · **Lock โน้ต** (คลิกขวา → Lock Note: รหัสเดียวทุกโน้ต, AES-GCM, ไฟล์/backup/history/export
-ไม่มีข้อความจริง, ล็อกเองเมื่อปิด panel หรือจอ sleep, Touch ID ได้; **ลืมรหัส = เปิดไม่ได้อีก**)
+**Opening the panel**: push the pointer against the screen edge (the corners are left for hot corners) · a hotkey
+(your choice) · the Open Bar, a thin strip at the screen edge · the menu bar icon · opening the app again from
+Finder or Spotlight. Works over full-screen apps, with Stage Manager and on several displays ·
+**⇧⌘P keeps the panel open** while you click other apps · adjustable **opacity** · **hide from screen sharing and
+recordings** (Settings → General)
 
-**การ์ดโน้ต**: โชว์แค่ชื่อโน้ต (ผลค้นหาโชว์บรรทัดที่เจอด้วย; ปิดได้ใน Settings → Appearance เพื่อโชว์หลายบรรทัด
-หน้าตาเหมือนตอนเปิดโน้ต) · **พักเมาส์บนการ์ด** = การ์ด preview ขนาดคงที่ข้าง panel
-ระดับเดียวกับแถวที่ชี้ แสดงโน้ตเต็ม เลื่อนอ่านได้ เมาส์ออกแล้วหายเอง คลิกเพื่อแก้
-· พักเมาส์บน**โฟลเดอร์** (หรือ Smart Folder, Archive, Upcoming, Recently Deleted) = preview รายการข้างใน, คลิกโฟลเดอร์ย่อย
-เพื่อเข้าไปในการ์ดเดิม (แถบ path ด้านบนกดย้อนได้), พักบนโน้ตในรายการ = การ์ดอ่านโน้ตขนาดเท่ากันข้างๆ,
-คลิกโน้ตหรือ ↗ = เปิดใน panel (Settings → General: เปิด/ปิด, เวลาก่อนแสดง, เวลาก่อนหาย, ความกว้าง)
-· **รูปจากเว็บ** ในโน้ตรอกด Load ทีละโน้ต (การโหลดบอกเว็บต้นทางว่าคุณเปิดโน้ต) หรือเปิดให้โหลดทุกโน้ตใน Settings
+**Organizing**: folders nest without limit · notes can live on the home page, outside any folder · sort notes by
+date edited, date created, title or by hand (per folder, in the ⋯ menu) · **Recently Deleted**: Undo (or ⌘Z) right
+after deleting, restore within 30 days · **Archive** takes notes out of folders and search results · fold and unfold
+subfolders in place (the arrow before a folder) · click the page title to jump to the folder above · drag notes and
+folders onto a folder to move them (folders: drop on the middle of the row) or onto Recently Deleted to delete ·
+select several (⌘-click, ⇧-click, ⌘A), then move, color, pin, archive or delete them at once · folder icons (SF
+Symbols or emoji) · the home page has Folders / Smart Folders / Library (Archive, Recently Deleted) / Tags / Notes ·
+duplicate a note · Outline jumps to a heading · colors (background or side bar) · pins · drag to reorder notes and
+folders (dragging into or out of the pinned group pins or unpins) · fold long notes · move folders · search every
+folder · reopens where you left off
 
-**ปรับได้ใน Settings**: General — ขอบจอ, เวลาเปิด/ปิด panel ตอนเมาส์ชนขอบ/ออก, ความกว้าง, preview, Tags ที่หน้าแรก,
-เวลาที่กด Undo ได้, Tab ใน code mode · Appearance — ธีมสี, ฟอนต์ (บอกชัดว่าฟอนต์ไหนไม่มีไทย/อังกฤษ), ขนาด, ระยะบรรทัด/ย่อหน้า, ขนาดหัวข้อ, ย่อหน้า list,
-ฟอนต์โค้ด, ความหนาแน่น, ความโค้ง, จำนวนบรรทัดบนการ์ด, Light/Dark · Shortcuts — คีย์ลัด global และคีย์ลัดที่ตั้งเอง
-(โน้ตใหม่จาก template ลงโฟลเดอร์ที่เลือก หรือเปิดโน้ต; ใช้ใน Cortexy หรือจากทุกแอป) · Data — โฟลเดอร์เก็บข้อมูล, เปลี่ยนรหัสโน้ตล็อก,
-เก็บ Recently Deleted กี่วัน, เก็บ backup กี่ชุด
+**Search and links**: **⌘O** quick open (notes, folders, #tags, fuzzy) · **⌘P** command palette (or type `>` in ⌘O) ·
+`#tag` (click to see its notes, a tag list on the home page, suggestions as you type `#`) ·
+`[[Note title]]` / `[[Note title|text]]` link to another note (a missing note is created, suggestions as you type
+`[[`, renaming a note updates the links to it) · `[[Note#Heading]]` goes to a heading (type `#` for its headings),
+`[[#Heading]]` within the same note, `[[Note#^id]]` goes to the line ending in `^id` ·
+**Embeds**: `![[Note]]` on a line of its own shows that note read-only, `![[Note#Heading]]` just that section. With the
+caret on the line you see `![[…]]` to edit, with the card under it; elsewhere just the card. Click its title to open
+the note · **frontmatter** (Obsidian's `---` properties) shows dimmed and is never taken as the title, `tags:` count as
+tags, `aliases:` are other names to link to · under a note, "N linked here" = backlinks, "N links" = outgoing links,
+"N mentions" = notes that name it without linking (one click links them) · **⌘] Forward** · **Random note** (⌘P) ·
+**Rename tag** (right-click a tag on the home page; an existing name merges them) and nested tags as a tree ·
+**Show Attachments** (⌘P): every attachment, and clearing out unused ones · graph **Color by** folder or tag ·
+Version History shows a **diff** against now · reading time, and a word goal with `goal:` in the frontmatter ·
+**⌘G Graph**: dots are notes, lines are `[[links]]` (optionally #tags as teal dots, or hide notes without links).
+Drag dots to arrange, drag the background to pan, scroll or pinch to zoom, hover a dot to highlight its links, click
+to open the note in the panel; "Around this note" shows only notes within 2 links (right-click a note → Show in
+Graph) · the search field has helpers: `#` lists tags · `is:` filters (todo, done, pinned…) · `path:` a folder ·
+`"phrase"` · `-word` · `>` commands; Tab takes the first · **Lock a folder** (right-click a folder → Lock Folder…):
+every note in it and its subfolders is encrypted with the locked-notes password and stays out of search, tags, ⌘O,
+the graph and previews until unlocked; notes written while it's open are encrypted when it locks again ·
+advanced search: `"phrase"` `-exclude` `#tag` `tag:x` `path:Work` `is:todo` `is:done` `is:task` `is:pinned`
+`is:archived` · search only the open folder · matches highlighted · **Save as Smart Folder** keeps a search as a folder
 
-**เนื้อหา**: Markdown แบบซ่อนเครื่องหมาย (`# หัวข้อ`, `**หนา**`, `*เอียง*`, `~~ขีดฆ่า~~`, `` `code` ``, code block, quote,
-`[ลิงก์](url)`) · checklist คลิกติ๊กได้ทั้งใน editor และบนการ์ด · Return ต่อลิสต์ให้, Tab/⇧Tab ย่อหน้า ·
-รูปภาพ (วาง/ลาก/เลือกไฟล์/**ถ่าย screenshot**) · ไฟล์และโฟลเดอร์แนบ (ดับเบิลคลิกเปิด) · `#ff8800` แสดงเป็นสี ·
-**⌥⌘↑/↓ ย้ายบรรทัด** · **⌘-click** คัดลอก code block/หัวข้อ/รายการ/quote (⌥⌘-click = คัดลอกลิงก์) · ปุ่ม ⧉ คัดลอกที่มุม code block ·
-ดับเบิลคลิกไฟล์แนบ = **Quick Look** · **วางลิงก์ทับคำที่เลือก** = ลิงก์, วางลิงก์เปล่าได้**ชื่อหน้าเว็บ** (ตัด `utm_…` ทิ้ง) ·
-วางจากเว็บ/Notes/Docs/Word เป็น **Markdown**, วางโค้ดเข้า code block ให้, ⌥⇧⌘V วางแบบข้อความล้วน · คัดลอกออกไป Mail/Pages ได้ rich text ·
-**พักเมาส์บนลิงก์** = preview โน้ต หรือการ์ดหน้าเว็บ (ปิดการถามเว็บได้ใน Settings) · **Snippet** (คลิกการ์ด = คัดลอก) · **Code mode** ต่อโน้ต · ลากข้อความ/ไฟล์/รูป/ลิงก์จากแอปอื่นมาวางเป็นโน้ตใหม่
-(ลากไปชนขอบจอ panel จะเปิดรอรับ) · ปุ่ม hover บนการ์ด: คัดลอก / พับ
+**Writing**: **Markdown tables** (the ⊞ button in the bottom bar; columns line up by themselves, `:-:` centers, `--:`
+right-aligns; click into a table to edit its source, Tab/⇧Tab to the next or previous cell, Tab in the last cell or ↩
+at a row's end adds a row) · **code colors** by the language after ``` (swift, js/ts, python, go, rust, java/kotlin,
+c/c++, ruby, shell, sql, json/yaml) · `==highlight==` (`==🔴…==` 🟠 🟢 🔵 🟣 for other colors) · **Callouts**
+`> [!tip] Title` (a box colored by type; `-`/`+` makes it foldable) · **`/` menu** at the start of a line · a
+**floating format bar** over selected text · image size `![alt|400](…)` (right-click an image → Image Size) ·
+**Read Only** per note · footnotes `[^1]` (click to go to `[^1]: text`) · **Templates**: notes in a "Templates"
+folder → ⋯ → New from Template (variables `{{date}}` `{{time}}` `{{weekday}}` `{{folder}}` `{{date:MMMM yyyy}}`,
+`{{cursor}}` = where typing starts) · **⌘D daily note** in a "Daily" folder (**⇧⌘D calendar**: hover a day to see
+its note and tasks, orange marks = days with tasks, click a day or a week number, weekly and monthly notes with their
+own templates, `{{week}}`). Folder name, template, date format and hotkey are set in Settings
 
-**ลื่น**: พิมพ์ในโน้ตยาวๆ ได้ไม่หน่วง (restyle เฉพาะย่อหน้าที่แก้) · บันทึกเบื้องหลัง · รูปถอดรหัสเท่าขนาดที่แสดง
-(รูปกล้อง 12MP ไม่กินแรมเป็นสิบ MB) และโหลดเบื้องหลังบนการ์ด · animation จังหวะเดียวทั้งแอป ปิดหมดเมื่อเปิด Reduce Motion
+**Power**: **Version history** (right-click → Version History; hover a version to preview it, Restore with Undo;
+kept in `History/`) · **floating windows** (right-click → Open in Window: always on top, remembers its place, stays
+open across relaunches) · **web images** `![](https://…)` (loaded in the background and cached; can be turned off) ·
+**due dates** `- [ ] task 📅 2026-10-05 14:30` (or `@2026-10-05`, or the calendar button under the editor): red =
+overdue, orange = today, theme color = later · an **Upcoming** page and macOS **notifications** (click one to open
+the note at the task's line; snooze buttons for 10 minutes, 1 hour, tomorrow) · ticked tasks sink below the open ones
+(right-click → Delete Checked Items) · task states `- [/]` in progress, `- [-]` cancelled · **repeating tasks**
+`🔁 every week` / `🔁 ทุกเดือน` (ticking one adds the next) · **math in notes**: a line ending in `=` shows its result,
+`name = value` sets a variable · **Lock a note** (right-click → Lock Note: one password for all, AES-GCM; files,
+backups, history and exports hold no plain text; locks itself when the panel closes or the screen sleeps; Touch ID
+works; **a forgotten password can't be recovered**)
 
-**หน้าตา**: Liquid Glass · 42 ธีมสี + สร้าง/แก้ธีมเอง (สี panel, การ์ด, accent) ·
-**ตัวอักษรเลือกแยกจากธีม**: ฟอนต์ไหนก็ได้ในเครื่อง (หรือใช้ฟอนต์ที่ธีมแนะนำ), ขนาด, ระยะบรรทัด/ย่อหน้า, ขนาดหัวข้อ, ฟอนต์โค้ด ·
-**Layout**: ความหนาแน่น, ความโค้งมุม, จำนวนบรรทัดบนการ์ด, ซ่อนแถบจัดรูปแบบ/วันที่ · บังคับ Light/Dark/ตามระบบ · Reduce Motion · VoiceOver labels
+**Note cards**: just the title (search results add the matching line; Settings → Appearance can show several lines,
+looking as they do when the note is open) · **hover a card** for a fixed-size preview card beside the panel, level
+with the row, showing the whole note; it scrolls, goes away when the pointer leaves, click to edit · hover a
+**folder** (or a Smart Folder, Archive, Upcoming, Recently Deleted) to preview its contents; click a subfolder to go
+into it inside the same card (the path bar on top goes back), hover a note in the list for a same-size reading card
+beside it, click a note or ↗ to open it in the panel (Settings → General: on/off, delay before showing, delay
+before hiding, width) · **web images** in a note wait for Load, note by note (loading tells the website you opened
+the note), or can be allowed for every note in Settings
 
-**ข้อมูล**: บันทึกอัตโนมัติ · backup รายวันเก็บ 14 วัน · ไฟล์เสียจะถูกเก็บแยกไว้ ไม่ถูกเขียนทับ ·
-เลือกโฟลเดอร์เก็บข้อมูลเองได้ → วางใน **iCloud Drive / OneDrive / Dropbox เพื่อ sync หลายเครื่อง**
-(ถ้าแก้พร้อมกัน อีกฝั่งจะถูกเก็บเป็นไฟล์ conflict) · export ทุกโน้ตเป็นไฟล์ `.md` · **Print / Save as PDF** (คลิกขวาโน้ต) · **Markdown mirror** (Settings → Data): สำเนา .md ทุกโน้ตที่อัปเดตเองทุกครั้งที่บันทึก
-(ค่าเริ่มต้น `Markdown/` ในโฟลเดอร์ข้อมูล, เขียนเฉพาะไฟล์ที่เปลี่ยน, ไม่มีโน้ตที่ล็อก) · **แบบสองทาง** (เปิดเพิ่ม): แก้ไฟล์ใน Obsidian แล้วโน้ตเปลี่ยนตาม,
-ไฟล์ .md ใหม่ = โน้ตใหม่, เปลี่ยนชื่อ/ย้ายไฟล์ = โน้ตเดิมเปลี่ยนชื่อ/ย้ายตาม, ลบไฟล์ = โน้ตไป Recently Deleted, แก้ทั้งสองฝั่งพร้อมกัน = เก็บทั้งสองเวอร์ชัน ·
-**Import** โฟลเดอร์ Markdown (Obsidian vault, Bear/Apple Notes export, TextBundle: โฟลเดอร์ย่อย, frontmatter, รูป `![[…]]`/`![](…)`, ลิงก์ .md → `[[…]]`) ·
-**Spotlight** ค้นเจอโน้ต (ไม่รวมโน้ตที่ล็อก) · export/copy โน้ตเป็นรูป ·
-ไม่มี analytics / telemetry
+**In Settings**: General: screen edge, panel open and close delays at the edge, width, previews, tags on the home
+page, how long Undo stays offered, Tab in code mode · Appearance: color theme, font (says clearly which fonts lack
+Thai or English), size, line and paragraph spacing, heading sizes, list indent, code font, density, corner radius,
+lines per card, Light/Dark · Shortcuts: global shortcuts and your own (a new note from a template into a chosen
+folder, or opening a note; inside Cortexy or from any app) · Data: data folder, change the locked-notes password,
+how long Recently Deleted keeps notes, how many backups to keep
 
-## คีย์ลัด
+**Content**: Markdown with its markup hidden (`# heading`, `**bold**`, `*italic*`, `~~strike~~`, `` `code` ``, code
+blocks, quotes, `[link](url)`) · checklists tick both in the editor and on cards · Return continues a list,
+Tab/⇧Tab indents · images (paste, drag, choose a file, or **take a screenshot**) · attached files and folders
+(double-click to open) · `#ff8800` shows as its color · **⌥⌘↑/↓ moves lines** · **⌘-click** copies a code block,
+heading, list item or quote (⌥⌘-click copies a link) · a ⧉ copy button on each code block · double-click an
+attachment for **Quick Look** · **paste a link over selected words** to link them, a bare pasted link gets **the
+page's title** (`utm_…` and other trackers stripped) · paste from the web, Notes, Docs or Word as **Markdown**, pasted
+code goes into a code block, ⌥⇧⌘V pastes plain text · copying out to Mail or Pages keeps rich text · **hover a link**
+for a preview of the note or a card of the web page (asking websites can be turned off in Settings) · **Snippets**
+(click the card to copy) · **Code mode** per note · drag text, files, images or links from other apps to make a new
+note (drag to the screen edge and the panel opens to take it) · hover buttons on cards: copy / fold
+
+**Smooth**: typing in long notes doesn't lag (only edited paragraphs are restyled) · saving happens in the
+background · images are decoded at the size they're shown (a 12 MP photo doesn't take tens of MB of memory) and load
+in the background on cards · one animation timing across the app, all of it off with Reduce Motion
+
+**Look**: Liquid Glass · 42 color themes, plus your own (panel, card and accent colors) · **type chosen apart from the
+theme**: any font on the Mac (or the theme's suggestion), size, line and paragraph spacing, heading sizes, code
+font · **Layout**: density, corner radius, lines per card, hide the format bar or dates · force Light, Dark or
+follow the system · Reduce Motion · VoiceOver labels
+
+**Data**: saves by itself · daily backups kept for 14 days · a damaged file is set aside, never overwritten · choose
+your own data folder → put it in **iCloud Drive, OneDrive or Dropbox to sync between Macs** (edited on two Macs at
+once, the other version is kept as a conflict file) · export every note as `.md` · **Print / Save as PDF**
+(right-click a note) · **Markdown mirror** (Settings → Data): a `.md` copy of every note, updated on each save
+(`Markdown/` in the data folder by default; only changed files are written; no locked notes) · **two-way** (turn on
+"Bring edits made in the copy back"): edit the files in Obsidian and the notes follow; a new `.md` file = a new note,
+renaming or moving a file renames or moves its note, deleting a file sends its note to Recently Deleted, edited on
+both sides at once = both versions kept · **Import** a Markdown folder (an Obsidian vault, a Bear or Apple Notes
+export, TextBundles: subfolders, frontmatter, images `![[…]]`/`![](…)`, links to .md files → `[[…]]`) ·
+**Spotlight** finds notes (never locked ones) · export or copy a note as an image · no analytics, no telemetry
+
+## Keyboard shortcuts
 
 | | |
 |---|---|
-| เปิด/ปิด panel | ⌃⌥N (เปลี่ยนได้ใน Settings → Shortcuts) · Esc / ⌘W ปิด |
-| โน้ตใหม่ / โฟลเดอร์ใหม่ | ⌘N / ⇧⌘N — สร้างในโฟลเดอร์ที่เปิดอยู่ (ตั้ง hotkey "New note" แบบ global ได้) |
-| โน้ตประจำวัน | ⌘D (ตั้ง hotkey "Today's note" แบบ global ได้) |
-| ค้นหา / ย้อนกลับ | ⌘F (ในโน้ต = หาในโน้ตนี้, ⌘G ถัดไป · ⇧⌘F = ค้นทุกโน้ต) / ⌘[ หรือ ← (กลับไปหน้าที่มา รวมผลค้นหา) |
+| Show / hide the panel | ⌃⌥N (change it in Settings → Shortcuts) · Esc / ⌘W hides |
+| New note / new folder | ⌘N / ⇧⌘N, in the open folder (a global "New note" hotkey can be set) |
+| Daily note | ⌘D (a global "Today's note" hotkey can be set) · ⇧⌘D calendar |
+| Search / back | ⌘F (in a note: find in it, ⌘G next · ⇧⌘F: search all notes) / ⌘[ or ← (back where you came from, search results included) · ⌘] forward |
 | Quick open / command palette | ⌘O / ⌘P |
-| Graph ของลิงก์ | ⌘G |
-| เลือก / เปิด / พับ / ลบ | ↑ ↓ / ↩ หรือ → / Space / ⌘⌫ |
-| ย้ายโน้ตไปโฟลเดอร์อื่น | ⇧⌘M |
-| เลือกหลายอัน | ⌘-click · ⇧-click · ⌘A · Esc ยกเลิก · ⌘⌫ ลบที่เลือก |
-| จัดรูปแบบ | ⌘B · ⌘I · ⌘E code · ⌘K ลิงก์ · ⌘L checklist · ⇧⌘X ขีดฆ่า · ⇧⌘8 bullet · ⇧⌘7 ลิสต์ตัวเลข · ⇧⌘9 quote · ⇧⌘H ไฮไลต์ · ⇥ ย่อหน้า (ปุ่ม Aa ใน format bar มี code block / เส้นคั่นด้วย) |
+| Link graph | ⌘G |
+| Keep the panel open | ⇧⌘P |
+| Select / open / fold / delete | ↑ ↓ / ↩ or → / Space / ⌘⌫ |
+| Move a note to another folder | ⇧⌘M |
+| Select several | ⌘-click · ⇧-click · ⌘A · Esc cancels · ⌘⌫ deletes the selection |
+| Formatting | ⌘B · ⌘I · ⌘E code · ⌘K link · ⌘L checklist · ⇧⌘X strike · ⇧⌘8 bullets · ⇧⌘7 numbers · ⇧⌘9 quote · ⇧⌘H highlight · ⇥ indent (the Aa button in the format bar also has code block and divider) |
+| Move lines | ⌥⌘↑ / ⌥⌘↓ |
+| Paste as plain text | ⌥⇧⌘V |
 | Settings | ⌘, |
 
-คีย์ลัดใช้ได้แม้แป้นพิมพ์เป็นภาษาไทยอยู่
+Shortcuts work with a Thai keyboard layout too.
 
-## AI agent และ command line
+## AI agents and the command line
 
-`Cortexy.app/Contents/Helpers/cortexy`: `list` · `search <คำ>` · `read <ชื่อโน้ต>` · `new <ข้อความ> [--folder F]` · `append <ข้อความ> [--to inbox|today|ชื่อ]` · `mcp`
-อ่านจาก `cortexy.json` อย่างเดียว ส่วนการเขียนส่งผ่านแอป (`cortexy://`) และไม่เห็นโน้ตที่ล็อก/โฟลเดอร์ที่ล็อก/Recently Deleted
+`Cortexy.app/Contents/Helpers/cortexy`: `list` · `search <words>` · `read <note title>` · `new <text> [--folder F]` ·
+`append <text> [--to inbox|today|title]` · `mcp`.
+It only reads `cortexy.json`; writes go through the app (`cortexy://`). It never sees locked notes, locked folders or
+Recently Deleted.
 
 ```bash
 claude mcp add cortexy -- "/Applications/Cortexy.app/Contents/Helpers/cortexy" mcp   # Claude Code
 ```
-Claude Desktop: Settings → Data → Copy for Claude Desktop แล้ววางใน config (เครื่องมือ: search_notes, read_note, list_notes, create_note, append_to_note)
 
-## ใช้กับแอปอื่น (Raycast, Alfred, Shortcuts, PopClip)
+Claude Desktop: Settings → Data → Copy for Claude Desktop, then paste into its config. Tools: `search_notes`,
+`read_note`, `list_notes`, `create_note`, `append_to_note`.
+
+## Working with other apps (Raycast, Alfred, Shortcuts, PopClip)
 
 **URL scheme**
 
@@ -174,63 +211,71 @@ Claude Desktop: Settings → Data → Copy for Claude Desktop แล้ววา
 open "cortexy://new?text=Buy%20milk&folder=Home"
 ```
 
-`cortexy://show` · `hide` · `toggle` · `new?text=…&folder=…` · `append?text=…&to=…` · `capture` · `search?q=…` · `open?title=…` · `tag/ชื่อtag`
+`cortexy://show` · `hide` · `toggle` · `new?text=…&folder=…` · `append?text=…&to=inbox|today|title` · `capture` ·
+`search?q=…` · `open?title=…` · `tag/name`
 
-**AppleScript** (ใน Shortcuts ใช้ action "Run AppleScript")
+**AppleScript** (in Shortcuts, use the "Run AppleScript" action)
 
 ```applescript
 tell application "Cortexy" to add note "Buy milk" in folder "Home"
+tell application "Cortexy" to append text "milk" in note "Groceries" -- without "in note": the Inbox note
 tell application "Cortexy" to search notes "milk"
 tell application "Cortexy" to toggle panel
 ```
 
-**ต่อท้ายโน้ต** `cortexy://append?text=…&to=inbox|today|ชื่อโน้ต` · AppleScript `append text "นม" in note "ของที่ต้องซื้อ"` (ไม่ใส่ in note = โน้ต Inbox) ·
-`cortexy://capture` เปิดกล่อง capture
+**Capture box**: set its shortcut in Settings → Shortcuts; type and press ↩ to add to the Inbox or today's note
+without opening the panel (`cortexy://capture` opens it too) · **Web clipper**: Settings → Shortcuts → Copy
+Bookmarklet, then paste it as a browser bookmark's address (saves the page title, link and selected text into a
+Clippings folder) · **notes tied to an app** (right-click a note → Show With App) · **OCR**: search finds words in
+images (read on the Mac, Thai and English, kept in `OCR/`; images in locked notes are never read), right-click an
+image → Copy Text, Screenshot as Text · PDFs show their first page
 
-**Capture box**: ตั้งคีย์ลัดใน Settings → Shortcuts พิมพ์แล้ว ↩ ต่อท้าย Inbox/โน้ตวันนี้โดยไม่เปิด panel ·
-**Web Clipper**: Settings → Shortcuts → Copy Bookmarklet แล้ววางเป็น address ของ bookmark ในเบราว์เซอร์ (เก็บชื่อหน้า ลิงก์ และข้อความที่เลือก ลงโฟลเดอร์ Clippings) ·
-**โน้ตผูกกับแอป** (คลิกขวาโน้ต → Show With App) · **OCR**: ค้นเจอคำในรูป (อ่านในเครื่อง ไทย+อังกฤษ เก็บใน `OCR/`, รูปในโน้ตที่ล็อกไม่ถูกอ่าน), คลิกขวารูป → Copy Text, Screenshot as Text ·
-PDF แสดงหน้าแรก
+**Services**: select text in any app → right-click → Services → **New Cortexy Note** (give it a shortcut in System
+Settings → Keyboard → Keyboard Shortcuts → Services)
 
-**Services**: เลือกข้อความในแอปไหนก็ได้ → คลิกขวา → Services → **New Cortexy Note**
-(ตั้งคีย์ลัดได้ที่ System Settings → Keyboard → Keyboard Shortcuts → Services)
+## Where the data is
 
-## ข้อมูลอยู่ที่ไหน
+By default `~/Library/Application Support/Cortexy/`: `cortexy.json` (all notes), `attachments/` (images and files),
+`Backups/`, `History/` (each note's versions), `OCR/` (text read from images, for search), `Markdown/` (if the mirror
+is on). Change it in Settings → Data.
 
-ค่าเริ่มต้น `~/Library/Application Support/Cortexy/` — `cortexy.json` (โน้ตทั้งหมด), `attachments/` (รูป),
-`Backups/`, `History/` (เวอร์ชันของแต่ละโน้ต), `OCR/` (ข้อความที่อ่านจากรูป สำหรับค้นหา), `Markdown/` (ถ้าเปิด mirror) — เปลี่ยนได้ที่ Settings → Data
+## Limits without Xcode or an Apple Developer account
 
-## ข้อจำกัดเมื่อไม่มี Xcode / Apple Developer account
+- **Native Shortcuts actions** (App Intents) need an Xcode build → use AppleScript or the URL scheme from Shortcuts
+- **Share extension and widgets** need Xcode → use the Services menu
+- **CloudKit sync** needs a Developer Team → use a folder in iCloud Drive
 
-- **Shortcuts actions แบบ native** (App Intents) ต้องใช้ Xcode build → ใช้ AppleScript/URL scheme ผ่าน Shortcuts แทน
-- **Share extension, widget** ต้องใช้ Xcode → ใช้ Services menu แทน
-- **iCloud sync แบบ CloudKit** ต้องมี Developer Team → ใช้โฟลเดอร์ใน iCloud Drive แทน
+[XCODE_PLAN.md](XCODE_PLAN.md) lays out the steps for each.
 
-## โครงสร้างโค้ด
+## Code map
 
-| ไฟล์ | หน้าที่ |
+| File | What it does |
 |---|---|
 | `CortexyApp.swift` | entry point, menu bar, URL scheme, Services |
-| `Panel.swift` | panel ข้างจอ, hot edge, hotkey (Carbon), Open Bar, คีย์ลัด |
-| `Nav.swift` | สถานะการนำทาง + action ร่วม (สร้าง/ลบ/ลากวาง/screenshot/export) |
-| `Views.swift` | root, header, editor screen, toolbar, เมนู |
-| `Lists.swift` | รายการโฟลเดอร์/โน้ต, การ์ด, drag & drop |
-| `Preview.swift` | หน้าต่าง preview ตอนพักเมาส์บนการ์ด |
-| `NoteWindow.swift` | โน้ตในหน้าต่างลอยของตัวเอง |
-| `Reminders.swift` | แจ้งเตือนงานที่มี due date |
-| `Lock.swift` | เข้ารหัสโน้ตที่ล็อก, Keychain, Touch ID |
-| `Editor.swift` | MarkdownTextView: แสดงผล, คลิก/คีย์, paste/copy, รายการแนะนำ, preview ลิงก์, Quick Look |
-| `Styler.swift` | จัดรูปแบบ Markdown สด, ฟอนต์/ขนาด (TextStyle), รูป/ไฟล์/PDF แนบ, ชนิด callout |
-| `MarkdownEditor.swift` | editor ใน SwiftUI + แถบจัดรูปแบบลอย + รายการแนะนำ |
-| `Markdown.swift` | logic Markdown ระดับบรรทัด: ลิงก์, tag, frontmatter, ตาราง, งาน/วันที่, ค้นหา (มีเทสต์) |
-| `Clipboard.swift` | วางลิงก์/โค้ด, HTML → Markdown, Markdown → HTML |
-| `Calc.swift` | คิดเลขในโน้ต (parser ของตัวเอง) |
-| `Store.swift` | โมเดล, บันทึก, backup, sync, ไฟล์แนบ, export (มีเทสต์) |
-| `Media.swift` | รูปจากเว็บ, ชื่อ/การ์ดของลิงก์เว็บ, OCR ข้อความในรูป |
-| `Library.swift` | Markdown mirror, import โฟลเดอร์ .md, Spotlight |
-| `Sources/cortexy-cli/main.swift` | คำสั่ง `cortexy` และ MCP server (อยู่ใน `Contents/Helpers` ของแอป) |
-| `Theme.swift` | ธีม 42 แบบ + ธีมที่สร้างเอง |
-| `Settings.swift` | หน้าต่าง Settings, ตัวอัด hotkey, ย้ายโฟลเดอร์ข้อมูล |
+| `Panel.swift` | the side panel, hot edge, hotkeys (Carbon), Open Bar, keyboard shortcuts, settings keys (`Prefs`) |
+| `Nav.swift` | navigation state and shared actions (create, delete, drag and drop, screenshots, export, links, daily notes) |
+| `Views.swift` | root view, header, editor screen, toolbar, menus, calendar, attachments page |
+| `Lists.swift` | folder and note lists, cards, drag and drop |
+| `Preview.swift` | the hover preview cards (notes, folders, web pages, calendar days, version diffs) |
+| `Graph.swift` | the link graph window |
+| `NoteWindow.swift` | a note in its own floating window |
+| `Reminders.swift` | notifications for tasks with due dates, snooze |
+| `Lock.swift` | encrypting locked notes and folders, Keychain, Touch ID |
+| `Editor.swift` | MarkdownTextView: loading, drawing (checkboxes, callouts, sums, embed cards), clicks and keys, paste and copy, the suggestion list, link previews, Quick Look |
+| `Styler.swift` | live Markdown styling, fonts and sizes (`TextStyle`), image/file/PDF attachments, embed cards, callout types |
+| `MarkdownEditor.swift` | the editor in SwiftUI, the floating format bar, the suggestion list |
+| `Markdown.swift` | line-level Markdown logic: links, tags, frontmatter, embeds, tables, tasks and dates, search (tested) |
+| `Clipboard.swift` | pasting links and code, HTML → Markdown, Markdown → HTML |
+| `Calc.swift` | math in notes (its own parser) |
+| `Store.swift` | models, saving, backups, sync, attachments, export (tested) |
+| `Media.swift` | web images, web link titles and cards, OCR of images |
+| `Library.swift` | Markdown mirror (two-way), importing .md folders, Spotlight |
+| `Welcome.swift` | the guide notes added on first launch (English and Thai) |
+| `Sources/cortexy-cli/main.swift` | the `cortexy` command and MCP server (in the app's `Contents/Helpers`) |
+| `Theme.swift` | the 42 themes and your own |
+| `Settings.swift` | the Settings window, hotkey recorder, moving the data folder |
 | `Scripting.swift` + `Resources/Cortexy.sdef` | AppleScript, Services |
-| `Snapshot.swift` | debug เท่านั้น: ไล่ทุกหน้าจอเพื่อถ่าย screenshot เทสต์ |
-| `tools/make-icon.swift` | สร้างไอคอนแอปจาก `Resources/AppIcon-art.png` → `Resources/AppIcon.icns` |
+| `Snapshot.swift` | debug only: walks every screen to take test screenshots |
+| `tools/smooth/` | the smoothness meter (`tour.sh`) |
+| `tools/demo/` | scripts that record the feature demo video |
+| `tools/make-icon.swift` | builds `Resources/AppIcon.icns` from `Resources/AppIcon-art.png` |
