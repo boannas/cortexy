@@ -185,8 +185,10 @@ enum Styler {
 
     /// Styles the paragraphs touching `range` (default: everything).
     /// `blocks`: the note's code blocks when the caller has them already (several ranges restyled at once).
+    /// `embed`: how tall the card of an embed line (`![[Note]]`, given "Note") is drawn under it; nil: no card.
     static func style(_ storage: NSTextStorage, active: NSRange, _ st: TextStyle, in range: NSRange? = nil,
-                      blocks known: [(whole: NSRange, body: NSRange, lang: String)]? = nil, sums knownSums: [Int: String]? = nil) {
+                      blocks known: [(whole: NSRange, body: NSRange, lang: String)]? = nil, sums knownSums: [Int: String]? = nil,
+                      embed: @escaping (String) -> CGFloat? = { _ in nil }) {
         let ns = storage.string as NSString
         let blocks = st.code ? [] : known ?? codeBlocks(storage.string)
         let meta = st.code ? 0 : MD.frontmatter(storage.string)?.length ?? 0 // restyles whole, like a code block
@@ -239,6 +241,24 @@ enum Styler {
             }
             if inCode {
                 storage.addAttributes([.font: st.mono, .backgroundColor: codeBackground], range: range)
+                return
+            }
+            if line.contains("![["), let m = MD.match(MD.embedRegex, line),
+               let height = embed((line as NSString).substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)) {
+                // An embedded note: its card is drawn under the line (see `markers`). The line shows as typed only
+                // while it's edited (to change what the card shows: `![[Plan#Budget]]`); elsewhere just the card.
+                let p = paragraph(st).mutableCopy() as! NSMutableParagraphStyle
+                p.paragraphSpacing = st.paragraphSpacing + height + 4
+                if editing {
+                    storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: range)
+                } else {
+                    p.minimumLineHeight = 0.01
+                    p.maximumLineHeight = 0.01
+                    storage.addAttributes([.font: hiddenFont, .foregroundColor: NSColor.clear], range: range)
+                }
+                storage.addAttribute(.paragraphStyle, value: p, range: range)
+                let target = (line as NSString).substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+                storage.addAttribute(.cxMarker, value: "embed:" + target, range: NSRange(location: range.location, length: 1))
                 return
             }
             if MD.match(rule, line) != nil, !MD.isTableRule(line) {
@@ -723,10 +743,10 @@ extension Due {
     }
 }
 
-/// An embedded note (`![[Note]]`), drawn as a framed card of its text: rendered once, like an image.
+/// An embedded note (`![[Note]]`), drawn as a framed card of its text under its line: rendered once, like an image.
 enum Embeds {
     /// `note`: what the link found (nil: no such note). `part`: the heading or block asked for, if any.
-    @MainActor static func attachment(target: String, note: Note?, part: (heading: String?, block: String?), store: Store, width: CGFloat, dark: Bool) -> NSTextAttachment {
+    @MainActor static func image(target: String, note: Note?, part: (heading: String?, block: String?), store: Store, width: CGFloat, dark: Bool) -> NSImage? {
         let shown: String? = note.flatMap { n in n.lock != nil ? nil : MD.embedText(n.text, heading: part.heading, block: part.block) }
         let view = EmbedCard(target: target, title: note?.title, text: shown, locked: note?.lock != nil, store: store)
             .frame(width: max(200, width))
@@ -734,12 +754,7 @@ enum Embeds {
             .tint(Themes.shared.current.accentColor)
         let r = ImageRenderer(content: view)
         r.scale = NSScreen.main?.backingScaleFactor ?? 2
-        let a = NSTextAttachment()
-        if let img = r.nsImage {
-            a.image = img
-            a.bounds = CGRect(origin: .zero, size: img.size)
-        }
-        return a
+        return r.nsImage
     }
 }
 

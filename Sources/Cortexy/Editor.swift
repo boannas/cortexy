@@ -15,7 +15,7 @@ final class MarkdownTextView: NSTextView {
     var previewing = false // read-only preview: no paragraph is being edited, so all markup stays hidden
     var onPreviewClick: () -> Void = {} // previews: a click that isn't on a link
     var resolve: (String) -> URL? = { _ in nil }
-    /// The notes, for embeds (`![[Note]]`); nil: embeds stay as typed.
+    /// The notes, for embeds (`![[Note]]`); nil: embed lines show as typed.
     var store: Store?
     var noteID: UUID? // whose text this is: whether its web images may be fetched
     var importFile: (URL) -> String = { $0.absoluteString }
@@ -39,7 +39,7 @@ final class MarkdownTextView: NSTextView {
 
     /// Replaces `![](…)` and `[name](file://…)` in `range` with attachment characters. Returns the length change.
     private func attach(in s: NSMutableAttributedString, range: NSRange) -> Int {
-        var delta = attachEmbeds(in: s, range: range)
+        var delta = 0
         for (re, isImage) in [(MD.imageRegex, true), (MD.fileLinkRegex, false)] {
             let ns = s.string as NSString
             let limit = NSRange(location: range.location, length: min(range.length + delta, ns.length - range.location))
@@ -67,30 +67,23 @@ final class MarkdownTextView: NSTextView {
         return delta
     }
 
-    /// `![[Note]]` lines as the note's card (read-only; clicking it opens the note). Whole lines only, outside code.
-    private func attachEmbeds(in s: NSMutableAttributedString, range: NSRange) -> Int {
-        guard let store, !style.code, s.string.contains("![[") else { return 0 }
-        let ns = s.string as NSString
-        let fence = Styler.codeBlocks(s.string).map(\.whole)
-        var delta = 0
-        let limit = NSRange(location: range.location, length: min(range.length, ns.length - range.location))
-        for m in MD.embedRegex.matches(in: s.string, range: limit).reversed() where !fence.contains(where: { NSIntersectionRange($0, m.range).length > 0 }) {
-            let target = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
-            let parts = MD.splitLink(target)
-            let note = store.note(titled: target) ?? store.note(titled: parts.title)
-            let whole = note.map { $0.title.localizedCaseInsensitiveCompare(target) == .orderedSame } ?? false // "C# tips" is a title, not C's heading
-            if let note, note.id == noteID { continue } // a note embedding itself: left as typed
-            let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua // as this editor looks
-            let a = Embeds.attachment(target: target, note: note, part: whole ? (nil, nil) : (parts.heading, parts.block), store: store, width: maxImageWidth, dark: dark)
-            let piece = NSMutableAttributedString(attachment: a)
-            piece.addAttributes(Styler.base(style), range: NSRange(location: 0, length: 1))
-            piece.addAttribute(.cxSource, value: ns.substring(with: m.range), range: NSRange(location: 0, length: 1))
-            piece.addAttribute(.cxOpen, value: Link.note(target), range: NSRange(location: 0, length: 1))
-            s.replaceCharacters(in: m.range, with: piece)
-            delta -= m.range.length - 1
-        }
-        return delta
+    /// The card an embed line (`![[Note]]`, `![[Note#Heading]]`) shows under it, read-only; rendered again only
+    /// when what it shows changes. nil: no card (no notes to look in, or the note embedding itself).
+    private var embedCards: [String: (key: String, image: NSImage)] = [:]
+    private func embedCard(_ target: String) -> NSImage? {
+        guard let store else { return nil }
+        let parts = MD.splitLink(target)
+        let note = store.note(titled: target) ?? store.note(titled: parts.title)
+        if let note, note.id == noteID { return nil }
+        let whole = note.map { $0.title.localizedCaseInsensitiveCompare(target) == .orderedSame } ?? false // "C# tips" is a title, not C's heading
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua // as this editor looks
+        let key = "\(note?.id.uuidString ?? "")|\(note?.text.hashValue ?? 0)|\(note?.lock != nil)|\(maxImageWidth)|\(dark)"
+        if let card = embedCards[target], card.key == key { return card.image }
+        guard let img = Embeds.image(target: target, note: note, part: whole ? (nil, nil) : (parts.heading, parts.block), store: store, width: maxImageWidth, dark: dark) else { return nil }
+        embedCards[target] = (key, img)
+        return img
     }
+    private func embedHeight(_ target: String) -> CGFloat? { embedCard(target)?.size.height }
 
     func load(_ markdown: String) {
         if textStorage?.delegate == nil {
@@ -98,6 +91,7 @@ final class MarkdownTextView: NSTextView {
             NotificationCenter.default.addObserver(self, selector: #selector(webImagesAllowed(_:)), name: WebImages.allowed, object: nil)
         }
         textStorage?.delegate = self
+        layoutManager?.delegate = self
         // A long note is laid out where it's looked at, not from its start to the caret first (the editor stops
         // measuring such a note anyway, see `fit`); short ones stay contiguous, which keeps their scrolling exact.
         layoutManager?.allowsNonContiguousLayout = (markdown as NSString).length >= 20_000
@@ -156,7 +150,7 @@ final class MarkdownTextView: NSTextView {
         return out
     }
 
-    /// Turns freshly typed or pasted `![](…)`, file links and `![[Note]]` lines into attachments, undoably, keeping the caret in place.
+    /// Turns freshly typed or pasted `![](…)`/file links into attachments, undoably, keeping the caret in place.
     func convertTypedAttachments() {
         guard !converting, !hasMarkedText(), let st = textStorage, let edited = unconverted,
               undoManager?.isUndoing != true, undoManager?.isRedoing != true else { return }
@@ -165,7 +159,7 @@ final class MarkdownTextView: NSTextView {
         let full = NSRange(location: 0, length: plain.length)
         // Only the paragraphs just typed in: elsewhere links were converted already, or can't be (web, missing files).
         let scope = Styler.paragraphs(plain, edited)
-        guard [MD.imageRegex, MD.fileLinkRegex, MD.embedRegex].contains(where: { $0.firstMatch(in: st.string, range: scope) != nil }) else { return }
+        guard MD.imageRegex.firstMatch(in: st.string, range: scope) != nil || MD.fileLinkRegex.firstMatch(in: st.string, range: scope) != nil else { return }
         let copy = NSMutableAttributedString(attributedString: st)
         guard attach(in: copy, range: scope) != 0 else { return }
         converting = true
@@ -207,7 +201,7 @@ final class MarkdownTextView: NSTextView {
         }
         if force || fences != fenceCount || meta != metaLines { // frontmatter appearing or ending changes the lines in it
             if editing { return afterTheEdit(force) }
-            Styler.style(storage, active: active, style)
+            Styler.style(storage, active: active, style, embed: embedHeight)
         } else {
             let parts = (dirty.map { [$0] } ?? []) + (active != lastActive ? [active, lastActive] : [])
             guard !parts.isEmpty else { return }
@@ -224,7 +218,7 @@ final class MarkdownTextView: NSTextView {
                 if ranges.contains(where: { NSUnionRange(near, Styler.withTableRows(ns, $0)) != near }) { return afterTheEdit(false) }
             }
             let blocks = fences == 0 || style.code ? [] : Styler.codeBlocks(string) // once, not once per range
-            for r in ranges { Styler.style(storage, active: active, style, in: r, blocks: blocks, sums: sums) }
+            for r in ranges { Styler.style(storage, active: active, style, in: r, blocks: blocks, sums: sums, embed: embedHeight) }
         }
         dirty = nil
         lastActive = active
@@ -285,6 +279,14 @@ final class MarkdownTextView: NSTextView {
                 return
             }
             if kind.hasPrefix("callout:") { return } // its box is drawn under the text (drawBackground)
+            if kind.hasPrefix("embed:") { // an embedded note's card, under its line (hidden, unless it's edited)
+                var used = lm.lineFragmentUsedRect(forGlyphAt: g, effectiveRange: nil)
+                if NSMaxRange((storage.string as NSString).paragraphRange(for: range)) == storage.length, // the last line: its room is in it (see the layout manager's delegate)
+                   let p = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle { used.size.height -= p.paragraphSpacing }
+                let size = embedCards[String(kind.dropFirst(6))]?.image.size ?? .zero
+                out.append((range, kind, NSRect(x: textContainerOrigin.x + tc.lineFragmentPadding, y: used.maxY + textContainerOrigin.y + 2, width: size.width, height: size.height)))
+                return
+            }
             if kind.hasPrefix("sum:") { // after the "=": where its result is written
                 let box = lm.boundingRect(forGlyphRange: NSRange(location: g, length: 1), in: tc)
                 out.append((range, kind, NSRect(x: box.maxX + textContainerOrigin.x + 6, y: box.minY + textContainerOrigin.y, width: 200, height: box.height)))
@@ -343,6 +345,10 @@ final class MarkdownTextView: NSTextView {
             if m.kind == "quote" {
                 NSColor.tertiaryLabelColor.setFill()
                 NSBezierPath(roundedRect: m.rect, xRadius: 1.5, yRadius: 1.5).fill()
+                continue
+            }
+            if m.kind.hasPrefix("embed:") {
+                embedCards[String(m.kind.dropFirst(6))]?.image.draw(in: m.rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
                 continue
             }
             if m.kind.hasPrefix("sum:") {
@@ -464,6 +470,18 @@ final class MarkdownTextView: NSTextView {
     override func mouseDown(with event: NSEvent) {
         if !previewing { Self.active = self } // a click into a window that kept its focus doesn't make it first responder again
         let p = convert(event.locationInWindow, from: nil)
+        if let hit = markers().first(where: { $0.kind.hasPrefix("embed:") && $0.rect.contains(p) }) {
+            // An embedded note: its title opens the note; the rest of the card puts the caret on its line, to
+            // change what it shows (a preview has nothing to edit: anywhere opens it).
+            if previewing || p.y - hit.rect.minY < 28 {
+                if event.clickCount == 1 { _ = delegate?.textView?(self, clickedOnLink: Link.note(String(hit.kind.dropFirst(6))), at: hit.range.location) }
+            } else {
+                let ns = string as NSString, close = ns.range(of: "]]", options: .backwards, range: ns.paragraphRange(for: hit.range))
+                window?.makeFirstResponder(self)
+                setSelectedRange(NSRange(location: close.location == NSNotFound ? hit.range.location : close.location, length: 0)) // before "]]": to type "#Heading"
+            }
+            return
+        }
         if previewing {
             let i = characterIndexForInsertion(at: p)
             if let st = textStorage, i < st.length, st.attribute(.link, at: i, effectiveRange: nil) != nil { return super.mouseDown(with: event) }
@@ -507,10 +525,6 @@ final class MarkdownTextView: NSTextView {
             if i < st.length, st.attribute(.link, at: i, effectiveRange: nil) != nil, NSLocationInRange(selectedRange().location, para) {
                 return setSelectedRange(NSRange(location: i, length: 0))
             }
-        }
-        if let url = attachmentURL(at: p), url.scheme == "cortexy" { // an embedded note: a click opens it
-            if event.clickCount == 1 { _ = delegate?.textView?(self, clickedOnLink: url, at: characterIndexForInsertion(at: p)) }
-            return
         }
         if event.clickCount == 2, let url = attachmentURL(at: p) {
             if UserDefaults.standard.object(forKey: Prefs.quickLook) as? Bool ?? true { quickLook(url) } else { NSWorkspace.shared.open(url) }
@@ -1489,6 +1503,21 @@ extension MarkdownTextView: NSTextStorageDelegate {
         dirty = merged(dirty)
         unconverted = merged(unconverted)
         if lastActive.location != NSNotFound { lastActive = merged(lastActive) } // keep pointing at the same text
+    }
+}
+
+extension MarkdownTextView: NSLayoutManagerDelegate {
+    /// The space under a text's last line (its paragraph spacing) isn't counted in the text's height, so an
+    /// embed's card on the last line was cut off: that line is made as tall as its card needs.
+    func layoutManager(_ lm: NSLayoutManager, shouldSetLineFragmentRect rect: UnsafeMutablePointer<NSRect>, lineFragmentUsedRect used: UnsafeMutablePointer<NSRect>,
+                       baselineOffset: UnsafeMutablePointer<CGFloat>, in tc: NSTextContainer, forGlyphRange glyphs: NSRange) -> Bool {
+        guard let st = lm.textStorage, st.length > 0, NSMaxRange(lm.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)) == st.length else { return false }
+        let start = (st.string as NSString).paragraphRange(for: NSRange(location: st.length - 1, length: 0)).location
+        guard (st.attribute(.cxMarker, at: start, effectiveRange: nil) as? String)?.hasPrefix("embed:") == true,
+              let p = st.attribute(.paragraphStyle, at: start, effectiveRange: nil) as? NSParagraphStyle else { return false }
+        rect.pointee.size.height = used.pointee.height + p.paragraphSpacing
+        used.pointee.size.height = rect.pointee.height
+        return true
     }
 }
 

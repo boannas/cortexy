@@ -2326,19 +2326,32 @@ private func pngFile(in dir: URL) throws -> String {
     let md = "Notes\n![[Plan#Budget]]\n![[Missing]]\nend"
     h.tv.load(md)
     let st = h.tv.textStorage!
-    #expect(st.attribute(.attachment, at: 6, effectiveRange: nil) != nil)
-    #expect(st.attribute(.cxOpen, at: 6, effectiveRange: nil) as? URL == Link.note("Plan#Budget"))
-    #expect(h.tv.markdown() == md) // still ![[…]] in the note
-    // Typed (or picked from the suggestions): shown as soon as the line is whole, not after reopening the note.
+    func marker(_ i: Int) -> String? { st.attribute(.cxMarker, at: i, effectiveRange: nil) as? String }
+    func room(_ i: Int) -> CGFloat { (st.attribute(.paragraphStyle, at: i, effectiveRange: nil) as? NSParagraphStyle)?.paragraphSpacing ?? 0 }
+    func shown(_ i: Int) -> Bool { ((st.attribute(.font, at: i, effectiveRange: nil) as? NSFont)?.pointSize ?? 0) > 1 }
+    #expect(marker(6) == "embed:Plan#Budget" && room(6) > 40) // a card drawn under the line…
+    #expect(!shown(8))                                         // …and the line itself out of sight
+    #expect(h.tv.markdown() == md && h.tv.string == md)        // still ![[…]] in the note, and in the editor
+    let rep = h.tv.bitmapImageRepForCachingDisplay(in: h.tv.bounds)!
+    h.tv.cacheDisplay(in: h.tv.bounds, to: rep)                 // draws the cards
+    // With the caret on it, the line shows as typed, to change what it shows; the card follows.
+    let line = (md as NSString).range(of: "![[Plan#Budget]]")
+    h.tv.setSelectedRange(NSRange(location: NSMaxRange(line) - 2, length: 0))
+    h.tv.restyle()
+    #expect(shown(8) && marker(6) == "embed:Plan#Budget")
+    h.tv.setSelectedRange(NSRange(location: line.location + 7, length: 7)) // "#Budget"
+    h.tv.insertText("", replacementRange: h.tv.selectedRange())
+    h.tv.restyle()
+    #expect(marker(6) == "embed:Plan" && h.tv.markdown() == "Notes\n![[Plan]]\n![[Missing]]\nend")
+    // Typed (or picked from the suggestions): the card is there at once, under the line being typed.
     h.tv.load("Notes\n")
     h.tv.setSelectedRange(NSRange(location: 6, length: 0))
     for ch in "![[Plan]]" { h.tv.insertText(String(ch), replacementRange: h.tv.selectedRange()) }
-    #expect(st.attribute(.attachment, at: 6, effectiveRange: nil) != nil)
-    #expect(h.tv.markdown() == "Notes\n![[Plan]]")
-    #expect(h.tv.selectedRange().location == 7) // the caret after the card
+    h.tv.restyle()
+    #expect(marker(6) == "embed:Plan" && shown(8))
     h.tv.noteID = planID
     h.tv.load("![[Plan]]")
-    #expect(st.attribute(.attachment, at: 0, effectiveRange: nil) == nil) // itself: left as typed
+    #expect(marker(0) == nil) // itself: left as typed
 }
 
 /// Two-way mirror: an edit in the copy updates its note; edited on both sides, both versions are kept; a new
